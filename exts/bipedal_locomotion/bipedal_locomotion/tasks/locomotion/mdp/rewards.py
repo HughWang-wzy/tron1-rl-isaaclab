@@ -594,6 +594,25 @@ def conditional_base_height(
     return torch.abs(asset.data.root_pos_w[:, 2] - target)
 
 
+def track_base_height_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_jump",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sigma: float = 0.1,
+) -> torch.Tensor:
+    """Track commanded standing_height using exp kernel. Only active when NOT jumping.
+
+    Tracks standing_height (cmd[:, 2]) when jump_active=0.
+    Returns 0 when jumping so it doesn't interfere with jump rewards.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    jump_cmd = env.command_manager.get_command(command_name)
+    jump_active = jump_cmd[:, 0]
+    standing_h = jump_cmd[:, 2]
+    error = asset.data.root_pos_w[:, 2] - standing_h
+    return (1.0 - jump_active) * torch.exp(-torch.square(error) / (sigma ** 2))
+
+
 def jump_height_reward(
     env: ManagerBasedRLEnv,
     command_name: str = "base_jump",
@@ -640,6 +659,23 @@ def jump_landing_stability(
     height_error = asset.data.root_pos_w[:, 2] - standing_h
     reward = torch.exp(-torch.square(height_error) / (sigma ** 2))
     return not_jumping.float() * any_contact.float() * reward
+
+
+def jump_upward_vel(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_jump",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward positive z-axis velocity during jump. Provides gradient to learn takeoff.
+
+    Only active when jump_active=1. Returns clamp(vel_z, 0) so only upward
+    motion is rewarded (no penalty for falling back down).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    jump_cmd = env.command_manager.get_command(command_name)
+    jump_active = jump_cmd[:, 0]
+    vel_z = asset.data.root_lin_vel_w[:, 2]
+    return jump_active * torch.clamp(vel_z, min=0.0)
 
 
 def jump_tuck_legs(

@@ -409,17 +409,24 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             weight=-12.0,
             params={"command_name": "base_jump", "jump_scale": 0.2},
         )
-        self.rewards.pen_base_height = RewTerm(
-            func=mdp.conditional_base_height,
-            weight=-30.0,
-            params={"command_name": "base_jump"},
+        self.rewards.pen_base_height = None
+        
+        self.rewards.track_base_height = RewTerm(
+            func=mdp.track_base_height_exp,
+            weight=5.0,
+            params={"command_name": "base_jump", "sigma": 0.1},
         )
 
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
-            weight=5.0,
-            params={"command_name": "base_jump", "sigma": 0.05},
+            weight=10.0,
+            params={"command_name": "base_jump", "sigma": 0.1},
+        )
+        self.rewards.jump_upward_vel = RewTerm(
+            func=mdp.jump_upward_vel,
+            weight=8.0,
+            params={"command_name": "base_jump"},
         )
         self.rewards.jump_landing = RewTerm(
             func=mdp.jump_landing_stability,
