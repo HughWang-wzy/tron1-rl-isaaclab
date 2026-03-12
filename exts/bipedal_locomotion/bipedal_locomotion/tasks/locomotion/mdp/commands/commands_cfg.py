@@ -1,12 +1,21 @@
 import math
 from dataclasses import MISSING
 
+from isaaclab.envs.mdp import UniformVelocityCommandCfg
 from isaaclab.managers import CommandTermCfg
 from isaaclab.utils import configclass
 
 from .gait_command import GaitCommand  # Import the GaitCommand class
 from .height_command import HeightCommand  # Import the HeightCommand class
 from .jump_command import JumpCommand  # Import the JumpCommand class
+
+
+@configclass
+class UniformLevelVelocityCommandCfg(UniformVelocityCommandCfg):
+    """Velocity command with limit_ranges for curriculum-based range expansion."""
+
+    limit_ranges: UniformVelocityCommandCfg.Ranges = MISSING
+    """Hard limits that the curriculum cannot exceed."""
 
 
 @configclass

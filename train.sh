@@ -2,5 +2,6 @@
 
 # python scripts/rsl_rl/train.py --headless --task=Isaac-Limx-WF-Blind-Flat-v0
 
-python scripts/rsl_rl/train.py --headless --task=Isaac-Limx-WF --num_envs 512
+# python scripts/rsl_rl/train.py --headless --task=Isaac-Limx-WF --num_envs 512
 
+python scripts/rsl_rl/train.py --headless --task=Isaac-Limx-WF-Jump-Flat-v0 --num_envs 128

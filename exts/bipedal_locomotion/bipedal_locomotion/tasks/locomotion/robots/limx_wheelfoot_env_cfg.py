@@ -382,7 +382,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         self.commands.base_jump = mdp.JumpCommandCfg(
             jump_probability=0.3,
             standing_height_range=(0.6, 0.9),
-            jump_delta_range=(0.05, 0.3),
+            jump_delta_range=(0.25, 0.5),
             jump_margin=0.5,
             resampling_time_range=(3.0, 10.0),
         )
@@ -419,7 +419,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
             weight=5.0,
-            params={"command_name": "base_jump", "sigma": 0.1},
+            params={"command_name": "base_jump", "sigma": 0.05},
         )
         self.rewards.jump_landing = RewTerm(
             func=mdp.jump_landing_stability,
@@ -450,10 +450,44 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "command_name": "base_jump",
                 "start_prob": 0.05,
-                "end_prob": 0.5,
-                "start_step": 0,
-                "end_step": 3000,
+                "end_prob": 0.3,
+                "start_iteration": 0,
+                "end_iteration": 3000,
+                "num_steps_per_env": 24,
             },
+        )
+
+        # -- velocity command with limit_ranges for curriculum
+        self.commands.base_velocity = mdp.UniformLevelVelocityCommandCfg(
+            asset_name="robot",
+            heading_command=True,
+            heading_control_stiffness=1.0,
+            rel_standing_envs=0.02,
+            rel_heading_envs=1.0,
+            debug_vis=True,
+            resampling_time_range=(10.0, 10.0),
+            ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-1, 1),
+                lin_vel_y=(-0.0, 0.0),
+                ang_vel_z=(-0.5, 0.5),
+                heading=(-math.pi, math.pi),
+            ),
+            limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-4.0, 4.0),
+                lin_vel_y=(-0.0, 0.0),
+                ang_vel_z=(-math.pi, math.pi),
+                heading=(-math.pi, math.pi),
+            ),
+        )
+
+        # -- curriculum: expand velocity ranges based on reward
+        self.curriculum.lin_vel_levels = CurrTerm(
+            func=mdp.lin_vel_cmd_levels,
+            params={"reward_term_name": "rew_lin_vel_xy"},
+        )
+        self.curriculum.ang_vel_levels = CurrTerm(
+            func=mdp.ang_vel_cmd_levels,
+            params={"reward_term_name": "rew_ang_vel_z"},
         )
 
 

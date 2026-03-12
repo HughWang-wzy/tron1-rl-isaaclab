@@ -75,27 +75,107 @@ def jump_probability_curriculum(
     command_name: str,
     start_prob: float,
     end_prob: float,
-    start_step: int,
-    end_step: int,
+    start_iteration: int,
+    end_iteration: int,
+    num_steps_per_env: int = 24,
 ) -> torch.Tensor:
-    """Linearly ramp jump_probability from start_prob to end_prob over [start_step, end_step].
+    """Linearly ramp jump_probability from start_prob to end_prob over [start_iteration, end_iteration].
 
-    Before start_step: jump_probability = start_prob.
-    After end_step: jump_probability = end_prob.
-    Between: linear interpolation.
+    Uses env.common_step_counter / num_steps_per_env to approximate the current
+    RL iteration, since common_step_counter increments every env step.
 
     Returns:
         torch.Tensor: Current jump_probability as a scalar tensor (for logging).
     """
-    step = env.common_step_counter
-    if step <= start_step:
+    iteration = env.common_step_counter / num_steps_per_env
+    if iteration <= start_iteration:
         prob = start_prob
-    elif step >= end_step:
+    elif iteration >= end_iteration:
         prob = end_prob
     else:
-        alpha = (step - start_step) / (end_step - start_step)
+        alpha = (iteration - start_iteration) / (end_iteration - start_iteration)
         prob = start_prob + alpha * (end_prob - start_prob)
-
     term = env.command_manager.get_term(command_name)
     term.cfg.jump_probability = prob
     return torch.tensor([prob], dtype=torch.float32)
+
+
+def lin_vel_cmd_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str = "rew_lin_vel_xy",
+) -> torch.Tensor:
+    """Expand lin_vel_x/y command ranges when tracking reward is high enough.
+
+    Every max_episode_length steps, if mean episode reward exceeds 80% of the
+    reward weight, expand ranges by ±0.1 (clamped to limit_ranges).
+
+    Returns:
+        torch.Tensor: Max absolute velocity endpoint (for logging).
+    """
+    command_term = env.command_manager.get_term("base_velocity")
+    ranges = command_term.cfg.ranges
+    limit_ranges = command_term.cfg.limit_ranges
+
+    reward_term = env.reward_manager.get_term_cfg(reward_term_name)
+    reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][env_ids]) / env.max_episode_length_s
+
+    if env.common_step_counter % env.max_episode_length == 0:
+        if reward > reward_term.weight * 0.8:
+            delta_command = torch.tensor([-0.1, 0.1], device=env.device)
+            ranges.lin_vel_x = torch.clamp(
+                torch.tensor(ranges.lin_vel_x, device=env.device) + delta_command,
+                limit_ranges.lin_vel_x[0],
+                limit_ranges.lin_vel_x[1],
+            ).tolist()
+            ranges.lin_vel_y = torch.clamp(
+                torch.tensor(ranges.lin_vel_y, device=env.device) + delta_command,
+                limit_ranges.lin_vel_y[0],
+                limit_ranges.lin_vel_y[1],
+            ).tolist()
+
+    max_x = max(ranges.lin_vel_x, key=abs)
+    max_y = max(ranges.lin_vel_y, key=abs)
+    max_endpoint = max(max_x, max_y, key=abs)
+    return torch.tensor(abs(max_endpoint), device=env.device)
+
+
+def ang_vel_cmd_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str = "rew_ang_vel_z",
+) -> torch.Tensor:
+    """Expand ang_vel_z command range when tracking reward is high enough.
+
+    Only evaluates reward from low-speed envs (lin_speed < 1.5) to avoid
+    conflating turning quality with straight-line speed.
+
+    Returns:
+        torch.Tensor: Max absolute angular velocity endpoint (for logging).
+    """
+    command_term = env.command_manager.get_term("base_velocity")
+    ranges = command_term.cfg.ranges
+    limit_ranges = command_term.cfg.limit_ranges
+
+    reward_term = env.reward_manager.get_term_cfg(reward_term_name)
+    lin_vel_xy = env.scene["robot"].data.root_lin_vel_b[env_ids, :2]
+    lin_speed = torch.norm(lin_vel_xy, dim=1)
+    low_speed_mask = lin_speed < 1.5
+    if low_speed_mask.sum() > 0:
+        env_ids_tensor = torch.as_tensor(env_ids, device=env.device)
+        low_speed_ids = env_ids_tensor[low_speed_mask]
+        reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][low_speed_ids]) / env.max_episode_length_s
+    else:
+        reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][env_ids]) / env.max_episode_length_s
+
+    if env.common_step_counter % env.max_episode_length == 0:
+        if reward > reward_term.weight * 0.7:
+            delta_command = torch.tensor([-0.1, 0.1], device=env.device)
+            ranges.ang_vel_z = torch.clamp(
+                torch.tensor(ranges.ang_vel_z, device=env.device) + delta_command,
+                limit_ranges.ang_vel_z[0],
+                limit_ranges.ang_vel_z[1],
+            ).tolist()
+
+    max_endpoint = abs(max(ranges.ang_vel_z, key=abs))
+    return torch.tensor(max_endpoint, device=env.device)
