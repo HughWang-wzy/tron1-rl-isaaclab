@@ -77,23 +77,6 @@ class JumpCommand(CommandTerm):
         flight_time = 2.0 * torch.sqrt(2.0 * delta_h / self.GRAVITY)
         return flight_time + self.cfg.jump_margin
 
-    def _current_assist_force(self) -> float:
-        """Return the assist force magnitude for the current training iteration.
-
-        Decays by ``assist_decay_per_1000_iter`` per 1000 iterations starting
-        from ``assist_decay_start_iteration``.  Returns 0 when fully decayed.
-        """
-        if self.cfg.assist_force_max <= 0.0:
-            return 0.0
-        iteration = self._env.common_step_counter / self.cfg.assist_num_steps_per_env
-        if iteration < self.cfg.assist_decay_start_iteration:
-            scale = 1.0
-        else:
-            n_thousands = (iteration - self.cfg.assist_decay_start_iteration) / 1000.0
-            scale = (1.0 - self.cfg.assist_decay_per_1000_iter) ** n_thousands
-            scale = max(0.0, scale)
-        return self.cfg.assist_force_max * scale
-
     # ------------------------------------------------------------------
     # CommandTerm interface
     # ------------------------------------------------------------------
@@ -136,7 +119,7 @@ class JumpCommand(CommandTerm):
             self._assist_remaining[env_ids[walk_ids]] = 0.0
 
     def _update_command(self):
-        """Countdown timers and apply decaying assist force."""
+        """Countdown timers and apply assist force at current cfg magnitude."""
         # --- jump window countdown ---
         active_mask = self.jump_cmd[:, 0] > 0.5
         if active_mask.any():
@@ -153,12 +136,12 @@ class JumpCommand(CommandTerm):
         assist_mask = self._assist_remaining > 0.0
         robot = self._env.scene["robot"]
 
-        # forces shape: (num_envs, 1, 3)  — only the base body
+        # forces shape: (num_envs, 1, 3) — only the base body
         forces = torch.zeros(self.num_envs, 1, 3, device=self.device)
         torques = torch.zeros_like(forces)
 
         if assist_mask.any():
-            force_mag = self._current_assist_force()
+            force_mag = self.cfg.assist_force_max  # updated each iter by curriculum
             if force_mag > 0.0:
                 forces[assist_mask, 0, 2] = force_mag  # upward Z
             self._assist_remaining[assist_mask] -= self._env.step_dt

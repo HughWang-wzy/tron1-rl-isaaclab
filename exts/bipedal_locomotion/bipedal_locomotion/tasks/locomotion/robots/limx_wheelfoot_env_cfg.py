@@ -3,7 +3,7 @@ import math
 from isaaclab.utils import configclass
 
 from bipedal_locomotion.assets.config.wheelfoot_cfg import WHEELFOOT_CFG
-from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import WFEnvCfg
+from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import WFEnvCfg, CurriculumCfg
 from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
     BLIND_ROUGH_TERRAINS_CFG,
     BLIND_ROUGH_TERRAINS_PLAY_CFG,
@@ -365,6 +365,41 @@ class WFStairEnvCfg_PLAY(WFBaseEnvCfg_PLAY):
 
 
 @configclass
+class WFJumpCurriculumCfg(CurriculumCfg):
+    """Curriculum config for the jump environment — extends base with jump-specific terms."""
+
+    lin_vel_levels = CurrTerm(
+        func=mdp.lin_vel_cmd_levels,
+        params={"reward_term_name": "rew_lin_vel_xy"},
+    )
+    ang_vel_levels = CurrTerm(
+        func=mdp.ang_vel_cmd_levels,
+        params={"reward_term_name": "rew_ang_vel_z"},
+    )
+    jump_probability = CurrTerm(
+        func=mdp.jump_probability_curriculum,
+        params={
+            "command_name": "base_jump",
+            "start_prob": 0.05,
+            "end_prob": 0.3,
+            "start_iteration": 0,
+            "end_iteration": 3000,
+            "num_steps_per_env": 24,
+        },
+    )
+    jump_assist_force = CurrTerm(
+        func=mdp.jump_assist_force_curriculum,
+        params={
+            "command_name": "base_jump",
+            "force_max": 300.0,
+            "decay_start_iteration": 3000,
+            "decay_per_1000_iter": 0.1,
+            "num_steps_per_env": 24,
+        },
+    )
+
+
+@configclass
 class WFJumpFlatEnvCfg(WFBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
@@ -373,6 +408,9 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
+
+        # replace curriculum with jump-specific version (disables terrain_levels)
+        self.curriculum = WFJumpCurriculumCfg()
         self.curriculum.terrain_levels = None
 
         # increase action scale for explosive leg extension
@@ -466,7 +504,6 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         # -- relax base_contact termination threshold for early jump training
         self.terminations.base_contact.params["threshold"] = 200.0
 
-        # -- curriculum: ramp jump probability from 0.05 to 0.3
         self.curriculum.jump_probability = CurrTerm(
             func=mdp.jump_probability_curriculum,
             params={
@@ -500,16 +537,6 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 ang_vel_z=(-math.pi, math.pi),
                 heading=(-math.pi, math.pi),
             ),
-        )
-
-        # -- curriculum: expand velocity ranges based on reward
-        self.curriculum.lin_vel_levels = CurrTerm(
-            func=mdp.lin_vel_cmd_levels,
-            params={"reward_term_name": "rew_lin_vel_xy"},
-        )
-        self.curriculum.ang_vel_levels = CurrTerm(
-            func=mdp.ang_vel_cmd_levels,
-            params={"reward_term_name": "rew_ang_vel_z"},
         )
 
 

@@ -100,6 +100,40 @@ def jump_probability_curriculum(
     return torch.tensor([prob], dtype=torch.float32)
 
 
+def jump_assist_force_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    command_name: str,
+    force_max: float,
+    decay_start_iteration: int,
+    decay_per_1000_iter: float,
+    num_steps_per_env: int = 24,
+) -> torch.Tensor:
+    """Exponentially decay the upward assist force applied during jump.
+
+    Before decay_start_iteration: assist_force_max = force_max.
+    After that: multiplied by (1 - decay_per_1000_iter)^(n/1000) each iteration,
+    where n = iterations elapsed since decay_start_iteration.
+    Once the force reaches 0 (scale < 1e-3), it is clamped to 0.
+
+    Returns:
+        torch.Tensor: Current assist force magnitude (for logging).
+    """
+    iteration = env.common_step_counter / num_steps_per_env
+    if iteration < decay_start_iteration:
+        scale = 1.0
+    else:
+        n_thousands = (iteration - decay_start_iteration) / 1000.0
+        scale = (1.0 - decay_per_1000_iter) ** n_thousands
+        if scale < 1e-3:
+            scale = 0.0
+
+    current_force = force_max * scale
+    term = env.command_manager.get_term(command_name)
+    term.cfg.assist_force_max = current_force
+    return torch.tensor([current_force], dtype=torch.float32)
+
+
 def lin_vel_cmd_levels(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
