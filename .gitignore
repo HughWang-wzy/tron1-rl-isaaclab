@@ -64,3 +64,6 @@ datasets
 *.mtl
 *.STL
 **/env.yaml
+
+play.sh
+train.sh

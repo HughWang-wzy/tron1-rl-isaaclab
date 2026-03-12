@@ -5,4 +5,7 @@
 # python scripts/rsl_rl/play.py --task=Isaac-Limx-WF-Blind-Flat-Play-v0 --load_run 2026-01-13_16-46-43 --num_env 10 --checkpoint model_2500.pt
 # python scripts/rsl_rl/play.py --task=Isaac-Limx-WF-Blind-Flat-Play-v0  --num_env 10 --checkpoint model_38000.pt
 
-python scripts/rsl_rl/play.py --task=Isaac-Limx-WF-Jump-Flat-v0 --num_env 32 --load_run 2026-03-11_17-52-02 --checkpoint model_10000.pt
+# python scripts/rsl_rl/play.py --task=Isaac-Limx-WF-Jump-Flat-v0 --num_env 32 --load_run 2026-03-11_17-52-02 --checkpoint model_10000.pt
+
+
+python scripts/rsl_rl/play.py --task=Isaac-Limx-WF-Jump-Flat-v0 --num_env 32 --load_run 2026-03-12_11-23-59 --checkpoint model_10000.pt

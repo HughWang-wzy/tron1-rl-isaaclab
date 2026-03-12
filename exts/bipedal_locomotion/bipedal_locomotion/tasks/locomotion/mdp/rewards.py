@@ -617,6 +617,7 @@ def jump_height_reward(
     env: ManagerBasedRLEnv,
     command_name: str = "base_jump",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
     sigma: float = 0.1,
 ) -> torch.Tensor:
     """Reward reaching the target jump height. Only active when jump_active=1.
@@ -625,13 +626,17 @@ def jump_height_reward(
     Returns 0 when not jumping.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
+    in_flight = torch.any(forces_z > 1.0, dim=1)
     jump_cmd = env.command_manager.get_command(command_name)
     jump_active = jump_cmd[:, 0]
     target_height = jump_cmd[:, 1]
     current_height = asset.data.root_pos_w[:, 2]
     height_error = current_height - target_height
     reward = torch.exp(-torch.square(height_error) / (sigma ** 2))
-    return jump_active * reward
+    return jump_active * reward * in_flight.float()
 
 
 def jump_landing_stability(
@@ -653,7 +658,7 @@ def jump_landing_stability(
     standing_h = jump_cmd[:, 2]
 
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
-    any_contact = torch.any(forces_z > 1.0, dim=1)
+    any_contact = torch.any(forces_z < 1.0, dim=1)
 
     not_jumping = jump_active < 0.5
     height_error = asset.data.root_pos_w[:, 2] - standing_h

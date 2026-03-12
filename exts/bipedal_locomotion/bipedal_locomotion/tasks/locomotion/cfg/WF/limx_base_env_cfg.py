@@ -384,7 +384,7 @@ class RewardsCfg:
     )
     rew_same_foot_x_position = RewTerm(
         func=mdp.same_feet_x_position,
-        weight=-50, # 0.1, # changed to penalty mode
+        weight=-10, # 0.1, # changed to penalty mode
         params={"asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*")},
     )
 

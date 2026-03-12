@@ -406,31 +406,31 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         )
         self.rewards.pen_flat_orientation_l2 = RewTerm(
             func=mdp.conditional_flat_orientation_l2,
-            weight=-12.0,
+            weight=-10.0,
             params={"command_name": "base_jump", "jump_scale": 0.2},
         )
         self.rewards.pen_base_height = None
         
         self.rewards.track_base_height = RewTerm(
             func=mdp.track_base_height_exp,
-            weight=5.0,
+            weight=2.0,
             params={"command_name": "base_jump", "sigma": 0.1},
         )
 
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
-            weight=10.0,
-            params={"command_name": "base_jump", "sigma": 0.1},
+            weight=2.0,
+            params={"command_name": "base_jump", "sigma": 0.1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),},
         )
         self.rewards.jump_upward_vel = RewTerm(
             func=mdp.jump_upward_vel,
-            weight=8.0,
+            weight=4.0,
             params={"command_name": "base_jump"},
         )
         self.rewards.jump_landing = RewTerm(
             func=mdp.jump_landing_stability,
-            weight=2.0,
+            weight=1.0,
             params={
                 "command_name": "base_jump",
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
@@ -438,7 +438,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         )
         self.rewards.jump_tuck = RewTerm(
             func=mdp.jump_tuck_legs,
-            weight=3.0,
+            weight=1.0,
             params={
                 "command_name": "base_jump",
                 "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
@@ -446,6 +446,19 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "target_distance": 0.5,
                 "sigma": 0.05,
             },
+        )
+        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+        self.rewards.pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.03)
+        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03) 
+        self.rewards.pen_feet_distance = None
+        self.rewards.pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00016)
+        self.rewards.pen_joint_vel_wheel_l2 = RewTerm(
+            func=mdp.joint_vel_l2, weight=-5e-3, params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")}
+        )
+        self.rewards.pen_vel_non_wheel_l2 = RewTerm(
+            func=mdp.joint_vel_l2,
+            weight=-5e-5,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
         )
 
         # -- relax base_contact termination threshold for early jump training
