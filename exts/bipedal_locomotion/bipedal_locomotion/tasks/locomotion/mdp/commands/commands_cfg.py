@@ -74,3 +74,19 @@ class JumpCommandCfg(CommandTermCfg):
     """Extra time (seconds) added to ballistic flight time for crouch + landing."""
     resampling_time_range: tuple[float, float] = (3.0, 10.0)
     """Time interval for resampling the command (in seconds)."""
+
+    # ------------------------------------------------------------------
+    # Assist-force curriculum
+    # ------------------------------------------------------------------
+    assist_force_max: float = 300.0
+    """Initial upward assist force [N] applied at jump trigger. Set 0 to disable."""
+    assist_force_duration: float = 0.5
+    """How long [s] the assist force is applied after each jump trigger."""
+    assist_decay_start_iteration: int = 3000
+    """RL iteration at which the assist force starts decaying."""
+    assist_decay_per_1000_iter: float = 0.1
+    """Fractional decay per 1000 iterations (0.1 = 10% reduction per 1000 iters)."""
+    assist_num_steps_per_env: int = 24
+    """Steps per env per RL iteration, used to estimate iteration from step counter."""
+    assist_body_name: str = "base_Link"
+    """Name of the robot body to apply the assist force to."""

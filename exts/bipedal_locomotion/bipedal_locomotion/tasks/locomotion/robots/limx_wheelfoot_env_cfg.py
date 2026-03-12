@@ -472,9 +472,9 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "command_name": "base_jump",
                 "start_prob": 0.05,
-                "end_prob": 0.3,
-                "start_iteration": 0,
-                "end_iteration": 3000,
+                "end_prob": 0.5,
+                "start_iteration": 500,
+                "end_iteration": 5000,
                 "num_steps_per_env": 24,
             },
         )
