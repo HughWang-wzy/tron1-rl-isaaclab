@@ -613,6 +613,33 @@ def track_base_height_exp(
     return (1.0 - jump_active) * torch.exp(-torch.square(error) / (sigma ** 2))
 
 
+def jump_upward_vel(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_jump",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+) -> torch.Tensor:
+    """Reward positive z velocity during jump when feet are still on ground (push-off phase).
+
+    This provides the gradient signal for the robot to learn to push off the ground.
+    Only active when jump_active=1 AND at least one foot still in contact.
+    Rewards clipped positive z velocity (negative vel = 0 reward).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    jump_cmd = env.command_manager.get_command(command_name)
+    jump_active = jump_cmd[:, 0]
+
+    # at least one foot on ground = push-off phase
+    forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
+    on_ground = torch.any(forces_z > 1.0, dim=1)
+
+    vel_z = asset.data.root_lin_vel_w[:, 2]
+    # only reward upward velocity, not penalize downward
+    upward_vel = torch.clamp(vel_z, min=0.0)
+    return jump_active * on_ground.float() * upward_vel
+
+
 def jump_height_reward(
     env: ManagerBasedRLEnv,
     command_name: str = "base_jump",
@@ -664,23 +691,6 @@ def jump_landing_stability(
     height_error = asset.data.root_pos_w[:, 2] - standing_h
     reward = torch.exp(-torch.square(height_error) / (sigma ** 2))
     return not_jumping.float() * any_contact.float() * reward
-
-
-def jump_upward_vel(
-    env: ManagerBasedRLEnv,
-    command_name: str = "base_jump",
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Reward positive z-axis velocity during jump. Provides gradient to learn takeoff.
-
-    Only active when jump_active=1. Returns clamp(vel_z, 0) so only upward
-    motion is rewarded (no penalty for falling back down).
-    """
-    asset: Articulation = env.scene[asset_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
-    vel_z = asset.data.root_lin_vel_w[:, 2]
-    return jump_active * torch.clamp(vel_z, min=0.0)
 
 
 def jump_tuck_legs(

@@ -425,8 +425,10 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         )
         self.rewards.jump_upward_vel = RewTerm(
             func=mdp.jump_upward_vel,
-            weight=4.0,
-            params={"command_name": "base_jump"},
+            weight=6.0,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
+            },
         )
         self.rewards.jump_landing = RewTerm(
             func=mdp.jump_landing_stability,
