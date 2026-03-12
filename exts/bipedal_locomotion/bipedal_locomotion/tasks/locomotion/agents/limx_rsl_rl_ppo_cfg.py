@@ -157,7 +157,7 @@ class WF_TRON1AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 @configclass
 class WF_TRON1AJumpPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 10000
+    max_iterations = 20000
     save_interval = 200
     experiment_name = "wf_tron_1a_jump"
     empirical_normalization = False
