@@ -656,7 +656,7 @@ def jump_height_reward(
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
 
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
-    in_flight = torch.any(forces_z < 1.0, dim=1)
+    in_flight = torch.all(forces_z < 1.0, dim=1)
     jump_cmd = env.command_manager.get_command(command_name)
     jump_active = jump_cmd[:, 0]
     target_height = jump_cmd[:, 1]
