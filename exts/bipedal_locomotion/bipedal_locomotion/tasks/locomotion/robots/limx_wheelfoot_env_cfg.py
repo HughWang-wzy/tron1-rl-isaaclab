@@ -458,19 +458,19 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
-            weight=4.0,
+            weight=40.0,
             params={"command_name": "base_jump", "sigma": 0.1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),},
         )
         self.rewards.jump_upward_vel = RewTerm(
             func=mdp.jump_upward_vel,
-            weight=10.0,
+            weight=50.0,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             },
         )
         self.rewards.jump_landing = RewTerm(
             func=mdp.jump_landing_stability,
-            weight=2.0,
+            weight=1.0,
             params={
                 "command_name": "base_jump",
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
@@ -478,7 +478,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         )
         self.rewards.jump_tuck = RewTerm(
             func=mdp.jump_tuck_legs,
-            weight=2.0,
+            weight=20.0,
             params={
                 "command_name": "base_jump",
                 "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
