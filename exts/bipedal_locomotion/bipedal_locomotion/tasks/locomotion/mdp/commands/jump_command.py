@@ -127,7 +127,8 @@ class JumpCommand(CommandTerm):
             self.jump_cmd[expired, 0] = 0.0
             self.jump_cmd[expired, 1] = 0.0
             self._time_remaining[expired] = 0.0
-
+        # print(f"command: {self.jump_cmd}")  # for debugging
+        # print(f"time remaining: {self._time_remaining}")  # for debugging
         # --- assist force ---
         if self._assist_body_id is None:
             return
@@ -145,7 +146,6 @@ class JumpCommand(CommandTerm):
                 forces[assist_mask, 0, 2] = force_mag  # upward Z
             self._assist_remaining[assist_mask] -= self._env.step_dt
             self._assist_remaining.clamp_(min=0.0)
-
         robot.permanent_wrench_composer.set_forces_and_torques(
             forces, torques, body_ids=[self._assist_body_id], is_global=True
         )

@@ -731,3 +731,20 @@ def jump_tuck_legs(
     reward = torch.exp(-torch.square(error) / (sigma ** 2))
 
     return jump_active * in_flight.float() * reward
+
+
+def base_contact_penalty(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    """Linear penalty proportional to base_Link contact force above threshold.
+
+    penalty = max(0, |F| - threshold)
+
+    Below threshold: 0. Above threshold: linearly increasing.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]  # (num_envs, n_bodies, 3)
+    force_magnitude = torch.norm(forces, dim=-1).sum(dim=-1)  # (num_envs,)
+    return torch.clamp(force_magnitude - threshold, min=0.0)

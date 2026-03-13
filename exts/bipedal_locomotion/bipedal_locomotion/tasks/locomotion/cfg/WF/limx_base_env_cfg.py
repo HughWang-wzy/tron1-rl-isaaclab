@@ -433,6 +433,7 @@ class RewardsCfg:
     jump_height: RewTerm | None = None
     jump_landing: RewTerm | None = None
     jump_tuck: RewTerm | None = None
+    pen_base_contact: RewTerm | None = None
     
     # pen_wheel_slide = RewTerm(
     #         func=mdp.wheel_slide_penalty,

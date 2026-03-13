@@ -397,7 +397,13 @@ class WFJumpCurriculumCfg(CurriculumCfg):
             "num_steps_per_env": 24,
         },
     )
-
+    disable_base_contact_termination = CurrTerm(
+        func=mdp.disable_termination,
+        params={
+            "term_name": "base_contact",
+            "num_steps": 1000 * 24,
+        },
+    )
 
 @configclass
 class WFJumpFlatEnvCfg(WFBaseEnvCfg):
@@ -501,8 +507,16 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
         )
 
-        # -- relax base_contact termination threshold for early jump training
-        self.terminations.base_contact.params["threshold"] = 200.0
+        # -- base_contact: keep termination active initially, disabled at iter 1000 by curriculum
+        # soft penalty always active as backup
+        self.rewards.pen_base_contact = RewTerm(
+            func=mdp.base_contact_penalty,
+            weight=-0.001,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
+                "threshold": 100.0,
+            },
+        )
 
         self.curriculum.jump_probability = CurrTerm(
             func=mdp.jump_probability_curriculum,
@@ -551,7 +565,8 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.events.add_base_mass = None
 
         # higher jump probability for demo
-        self.commands.base_jump.jump_probability = 0.5
+        self.commands.base_jump.jump_probability = 0.8
+        self.commands.base_jump.resampling_time_range = (5.0, 5.0)
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
         self.curriculum = None
