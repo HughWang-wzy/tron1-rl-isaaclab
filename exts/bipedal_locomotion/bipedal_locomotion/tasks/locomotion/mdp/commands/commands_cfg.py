@@ -84,3 +84,13 @@ class JumpCommandCfg(CommandTermCfg):
     """How long [s] the assist force is applied after each jump trigger."""
     assist_body_name: str = "base_Link"
     """Name of the robot body to apply the assist force to."""
+
+    # ------------------------------------------------------------------
+    # Contact-based landing detection
+    # ------------------------------------------------------------------
+    contact_sensor_name: str = "contact_forces"
+    """Name of the contact sensor in the scene."""
+    contact_body_names: list[str] | str = "wheel_.*"
+    """Body names for feet/wheels used to detect ground contact."""
+    contact_force_threshold: float = 1.0
+    """Force threshold [N] above which a body is considered in contact."""

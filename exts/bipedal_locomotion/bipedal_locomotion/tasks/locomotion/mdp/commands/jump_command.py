@@ -42,16 +42,25 @@ class JumpCommand(CommandTerm):
         mid = (cfg.standing_height_range[0] + cfg.standing_height_range[1]) / 2.0
         self.jump_cmd[:, 2] = mid
 
-        # jump window countdown (not exposed to policy)
+        # jump window countdown — used as max timeout safety net
         self._time_remaining = torch.zeros(self.num_envs, device=self.device)
 
         # assist-force countdown per env
         self._assist_remaining = torch.zeros(self.num_envs, device=self.device)
 
+        # contact-based landing detection: track previous step flight state
+        self._prev_in_flight = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+        # resolve contact sensor body IDs for landing detection
+        from isaaclab.sensors import ContactSensor
+        contact_sensor: ContactSensor = env.scene.sensors[cfg.contact_sensor_name]
+        self._contact_sensor = contact_sensor
+        robot = env.scene["robot"]
+        self._contact_body_ids, _ = robot.find_bodies(cfg.contact_body_names)
+
         # resolve base body index once at init
         self._assist_body_id: int | None = None
         if cfg.assist_force_max > 0.0:
-            robot = env.scene["robot"]
             body_ids, _ = robot.find_bodies(cfg.assist_body_name)
             self._assist_body_id = body_ids[0]
 
@@ -118,17 +127,25 @@ class JumpCommand(CommandTerm):
             self._assist_remaining[env_ids[walk_ids]] = 0.0
 
     def _update_command(self):
-        """Countdown timers and apply assist force at current cfg magnitude."""
-        # --- jump window countdown ---
+        """Countdown timers, detect landing via contact, and apply assist force."""
+        # --- contact-based landing detection ---
+        forces_z = self._contact_sensor.data.net_forces_w[:, self._contact_body_ids, 2]
+        in_flight = torch.all(forces_z < self.cfg.contact_force_threshold, dim=1)
+        any_contact = torch.any(forces_z > self.cfg.contact_force_threshold, dim=1)
+
+        # landing = was in flight last step, now has contact
+        landed = self._prev_in_flight & any_contact
+        self._prev_in_flight = in_flight
+
+        # --- jump window countdown (max timeout safety net) ---
         active_mask = self.jump_cmd[:, 0] > 0.5
         if active_mask.any():
             self._time_remaining[active_mask] -= self._env.step_dt
-            expired = active_mask & (self._time_remaining <= 0.0)
+            expired = active_mask & ((self._time_remaining <= 0.0) | landed)
             self.jump_cmd[expired, 0] = 0.0
             self.jump_cmd[expired, 1] = 0.0
             self._time_remaining[expired] = 0.0
-        # print(f"command: {self.jump_cmd}")  # for debugging
-        # print(f"time remaining: {self._time_remaining}")  # for debugging
+
         # --- assist force ---
         if self._assist_body_id is None:
             return

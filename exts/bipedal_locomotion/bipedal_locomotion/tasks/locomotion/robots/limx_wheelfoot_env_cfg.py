@@ -401,7 +401,7 @@ class WFJumpCurriculumCfg(CurriculumCfg):
         func=mdp.disable_termination,
         params={
             "term_name": "base_contact",
-            "num_steps": 1000 * 24,
+            "num_steps": 2000 * 24,
         },
     )
 
@@ -474,14 +474,14 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             },
         )
-        self.rewards.jump_landing = RewTerm(
-            func=mdp.jump_landing_stability,
-            weight=1.0,
-            params={
-                "command_name": "base_jump",
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
-            },
-        )
+        # self.rewards.jump_landing = RewTerm(
+        #     func=mdp.jump_landing_stability,
+        #     weight=1.0,
+        #     params={
+        #         "command_name": "base_jump",
+        #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
+        #     },
+        # )
         self.rewards.jump_tuck = RewTerm(
             func=mdp.jump_tuck_legs,
             weight=20.0,

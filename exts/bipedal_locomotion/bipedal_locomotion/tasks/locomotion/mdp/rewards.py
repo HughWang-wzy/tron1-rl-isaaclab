@@ -685,7 +685,7 @@ def jump_landing_stability(
     standing_h = jump_cmd[:, 2]
 
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
-    any_contact = torch.any(forces_z < 1.0, dim=1)
+    any_contact = torch.any(forces_z > 1.0, dim=1)
 
     not_jumping = jump_active < 0.5
     height_error = asset.data.root_pos_w[:, 2] - standing_h
