@@ -575,6 +575,35 @@ def conditional_flat_orientation_l2(
     return scale * penalty
 
 
+def conditional_joint_pos_limits(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_jump",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    jump_scale: float = 0.0,
+) -> torch.Tensor:
+    """Penalize joint position limit violations, suppressed during jumps.
+
+    During jump_active=1 the robot needs full ROM for push-off and tuck,
+    so the penalty is multiplied by jump_scale (default 0.0 = fully suppressed).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    jump_cmd = env.command_manager.get_command(command_name)
+    jump_active = jump_cmd[:, 0]
+
+    out_of_limits = -(
+        asset.data.joint_pos[:, asset_cfg.joint_ids]
+        - asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 0]
+    ).clamp(max=0.0)
+    out_of_limits += (
+        asset.data.joint_pos[:, asset_cfg.joint_ids]
+        - asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 1]
+    ).clamp(min=0.0)
+    penalty = torch.sum(out_of_limits, dim=1)
+
+    scale = torch.where(jump_active > 0.5, jump_scale, 1.0)
+    return scale * penalty
+
+
 def conditional_base_height(
     env: ManagerBasedRLEnv,
     command_name: str = "base_jump",

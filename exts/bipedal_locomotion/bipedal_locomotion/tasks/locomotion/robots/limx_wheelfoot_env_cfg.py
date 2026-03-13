@@ -394,7 +394,7 @@ class WFJumpCurriculumCfg(CurriculumCfg):
             "command_name": "base_jump",
             "force_max": 300.0,
             "decay_start_iteration": 2000,
-            "decay_per_1000_iter": 0.2,
+            "decay_per_1000_iter": 0.4,
             "num_steps_per_env": 24,
         },
     )
@@ -465,12 +465,12 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
-            weight=40.0,
+            weight=10.0,
             params={"command_name": "base_jump", "sigma": 0.1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),},
         )
         self.rewards.jump_upward_vel = RewTerm(
             func=mdp.jump_upward_vel,
-            weight=50.0,
+            weight=10.0,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             },
@@ -491,12 +491,11 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
                 "target_distance": 0.5,
-                "sigma": 0.1,
+                "sigma": 0.2,
             },
         )
-        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.005)
+        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
         self.rewards.pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.005)
-        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03) 
         # self.rewards.pen_feet_distance = None
         self.rewards.pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00002)
         self.rewards.pen_joint_vel_wheel_l2 = RewTerm(
@@ -508,14 +507,33 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
         )
 
-        # -- base_contact: keep termination active initially, disabled at iter 1000 by curriculum
-        # soft penalty always active as backup
+        # -- joint pos limits: suppressed during jumps (robot needs full ROM)
+        self.rewards.pen_non_wheel_pos_limits = RewTerm(
+            func=mdp.conditional_joint_pos_limits,
+            weight=-2.0,
+            params={
+                "command_name": "base_jump",
+                "asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*"),
+                "jump_scale": 0.0,
+            },
+        )
+
+        self.rewards.undesired_contacts = RewTerm(
+            func=mdp.undesired_contacts,
+            weight=-0.25,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["abad_.*", "hip_.*", "knee_.*"]),
+                "threshold": 10.0,
+            },
+        )
+
+        # -- base_contact soft penalty (threshold lowered to 10N to be meaningful)
         self.rewards.pen_base_contact = RewTerm(
             func=mdp.base_contact_penalty,
-            weight=-0.001,
+            weight=-0.01,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
-                "threshold": 100.0,
+                "threshold": 10.0,
             },
         )
 
