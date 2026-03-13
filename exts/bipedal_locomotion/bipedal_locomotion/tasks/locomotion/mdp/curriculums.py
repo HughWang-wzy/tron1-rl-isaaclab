@@ -124,7 +124,7 @@ def jump_assist_force_curriculum(
         scale = 1.0
     else:
         n_thousands = (iteration - decay_start_iteration) / 1000.0
-        scale = (1.0 - decay_per_1000_iter) ** n_thousands
+        scale = (1.0 - decay_per_1000_iter * n_thousands)
         if scale < 1e-3:
             scale = 0.0
 

@@ -392,8 +392,8 @@ class WFJumpCurriculumCfg(CurriculumCfg):
         params={
             "command_name": "base_jump",
             "force_max": 300.0,
-            "decay_start_iteration": 3000,
-            "decay_per_1000_iter": 0.1,
+            "decay_start_iteration": 2000,
+            "decay_per_1000_iter": 0.2,
             "num_steps_per_env": 24,
         },
     )
@@ -401,7 +401,7 @@ class WFJumpCurriculumCfg(CurriculumCfg):
         func=mdp.disable_termination,
         params={
             "term_name": "base_contact",
-            "num_steps": 2000 * 24,
+            "num_steps": 1500 * 24,
         },
     )
 
