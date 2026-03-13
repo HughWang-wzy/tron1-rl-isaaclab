@@ -29,7 +29,7 @@ def apply_external_force_torque_stochastic(
 
     This function creates a set of random forces and torques sampled from the given ranges. The number of forces
     and torques is equal to the number of bodies times the number of environments. The forces and torques are
-    applied to the bodies by calling ``asset.set_external_force_and_torque``. The forces and torques are only
+    applied to the bodies by calling ``asset.permanent_wrench_composer.set_forces_and_torques``. The forces and torques are only
     applied when ``asset.write_data_to_sim()`` is called in the environment.
     """
     # extract the used quantities (to enable type-hinting)
@@ -62,7 +62,7 @@ def apply_external_force_torque_stochastic(
     torques = math_utils.sample_uniform(torque_range[:, 0], torque_range[:, 1], size, asset.device)
     # set the forces and torques into the buffers
     # note: these are only applied when you call: `asset.write_data_to_sim()`
-    asset.set_external_force_and_torque(forces, torques, env_ids=masked_env_ids, body_ids=asset_cfg.body_ids)
+    asset.permanent_wrench_composer.set_forces_and_torques(forces, torques, env_ids=masked_env_ids, body_ids=asset_cfg.body_ids)
 
 
 def randomize_rigid_body_mass_inertia(

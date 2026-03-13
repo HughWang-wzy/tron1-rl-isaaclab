@@ -146,7 +146,7 @@ class JumpCommand(CommandTerm):
             self._assist_remaining[assist_mask] -= self._env.step_dt
             self._assist_remaining.clamp_(min=0.0)
 
-        robot.set_external_force_and_torque(
+        robot.permanent_wrench_composer.set_forces_and_torques(
             forces, torques, body_ids=[self._assist_body_id], is_global=True
         )
 
