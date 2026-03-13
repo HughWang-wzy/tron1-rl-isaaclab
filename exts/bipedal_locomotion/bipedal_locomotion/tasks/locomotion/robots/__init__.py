@@ -1,8 +1,8 @@
 import gymnasium as gym
 
-from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import PF_TRON1AFlatPPORunnerCfg, WF_TRON1AFlatPPORunnerCfg, SF_TRON1AFlatPPORunnerCfg, WF_TRON1APPORunnerCfg, WF_TRON1AJumpPPORunnerCfg
+from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import PF_TRON1AFlatPPORunnerCfg, WF_TRON1AFlatPPORunnerCfg, SF_TRON1AFlatPPORunnerCfg, WF_TRON1APPORunnerCfg, WF_TRON1AJumpPPORunnerCfg, WF_TRON1AMoEPPORunnerCfg
 
-from . import limx_pointfoot_env_cfg, limx_wheelfoot_env_cfg, limx_solefoot_env_cfg
+from . import limx_pointfoot_env_cfg, limx_wheelfoot_env_cfg, limx_solefoot_env_cfg, limx_wf_moe_env_cfg
 
 ##
 # Create PPO runners for RSL-RL
@@ -17,6 +17,8 @@ limx_sf_blind_flat_runner_cfg = SF_TRON1AFlatPPORunnerCfg()
 limx_wf_runner_cfg = WF_TRON1APPORunnerCfg()
 
 limx_wf_jump_runner_cfg = WF_TRON1AJumpPPORunnerCfg()
+
+limx_wf_moe_runner_cfg = WF_TRON1AMoEPPORunnerCfg()
 
 
 ##
@@ -136,5 +138,28 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFJumpFlatEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,
+    },
+)
+
+#############################
+# WF MoE Flat Environment
+#############################
+gym.register(
+    id="Isaac-Limx-WF-MoE-Flat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wf_moe_env_cfg.WFMoEFlatEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_moe_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-MoE-Flat-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wf_moe_env_cfg.WFMoEFlatEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_moe_runner_cfg,
     },
 )

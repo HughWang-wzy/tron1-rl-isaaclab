@@ -47,7 +47,7 @@ import torch
 from datetime import datetime
 
 # from rsl_rl.runners import OnPolicyRunner
-from rsl_rl.runner import OnPolicyRunner
+from rsl_rl.runner import OnPolicyRunner, MoEOnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -116,11 +116,11 @@ def main():
     env = RslRlVecEnvWrapper(env)
 
     # create runner from rsl-rl
-    # on_policy_runner_class = eval(agent_cfg.runner_type)
-    # runner: OnPolicyRunner | OnPolicyRunnerMlp = on_policy_runner_class(
-    #     env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device
-    # )
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
+    runner_cls = {"OnPolicyRunner": OnPolicyRunner, "MoEOnPolicyRunner": MoEOnPolicyRunner}.get(
+        runner_class_name, OnPolicyRunner
+    )
+    runner = runner_cls(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
 
     # write git state to logs
     # runner.add_git_repo_to_log(__file__)

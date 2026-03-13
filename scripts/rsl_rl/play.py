@@ -41,7 +41,7 @@ import gymnasium as gym
 import os
 import torch
 
-from rsl_rl.runner import OnPolicyRunner
+from rsl_rl.runner import OnPolicyRunner, MoEOnPolicyRunner
 
 from isaaclab.envs import ManagerBasedRLEnvCfg,DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.dict import print_dict
@@ -94,7 +94,11 @@ def main():
     env = RslRlVecEnvWrapper(env)
     # load previously trained model
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-    ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
+    runner_cls = {"OnPolicyRunner": OnPolicyRunner, "MoEOnPolicyRunner": MoEOnPolicyRunner}.get(
+        runner_class_name, OnPolicyRunner
+    )
+    ppo_runner = runner_cls(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path)
 
     # obtain the trained policy for inference
@@ -104,16 +108,21 @@ def main():
     # export policy to onnx
     if EXPORT_POLICY:
         export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-        export_policy_as_jit(
-            ppo_runner.alg.actor_critic, export_model_dir
-        )
-        print("Exported policy as jit script to: ", export_model_dir)
-        export_mlp_as_onnx(
-            ppo_runner.alg.actor_critic.actor, 
-            export_model_dir, 
-            "policy",
-            ppo_runner.alg.actor_critic.num_actor_obs,
-        )
+        if hasattr(ppo_runner.alg.actor_critic, "actor"):
+            # Standard ActorCritic — export actor as JIT and ONNX
+            export_policy_as_jit(
+                ppo_runner.alg.actor_critic, export_model_dir
+            )
+            print("Exported policy as jit script to: ", export_model_dir)
+            export_mlp_as_onnx(
+                ppo_runner.alg.actor_critic.actor,
+                export_model_dir,
+                "policy",
+                ppo_runner.alg.actor_critic.num_actor_obs,
+            )
+        else:
+            # MoE actor — JIT/ONNX export not yet supported for MoE
+            print("[WARN] MoE actor does not support JIT/ONNX export yet. Skipping policy export.")
         export_mlp_as_onnx(
             ppo_runner.alg.encoder,
             export_model_dir,

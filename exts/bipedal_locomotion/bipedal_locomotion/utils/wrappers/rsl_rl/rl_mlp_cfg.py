@@ -29,6 +29,27 @@ class EncoderCfg:
     orthogonal_init : bool = False
 
 
+@configclass
+class MoEActorCriticCfg:
+    """Configuration for MoE actor-critic networks."""
+
+    num_experts: int = 2
+    top_k: int = 1
+    gating_hidden_dims: list[int] = [128, 64]
+    expert_hidden_dims: list[int] = [512, 256, 128]
+    critic_hidden_dims: list[int] = [512, 256, 128]
+    activation: str = "elu"
+    init_noise_std: float = 1.0
+
+
+@configclass
+class MoEPpoAlgorithmCfg(RslRlPpoAlgorithmMlpCfg):
+    """PPO algorithm config with MoE auxiliary loss."""
+
+    class_name: str = "MoEPPO"
+    moe_aux_loss_coef: float = 0.1
+
+
 import os
 import copy
 import torch

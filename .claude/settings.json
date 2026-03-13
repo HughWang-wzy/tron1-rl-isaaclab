@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/hugh/tron1-rl-isaaclab -path */isaaclab_rl/rsl_rl* -name *.py)",
+      "Bash(python3 -c \"import sys; import isaaclab_rl; print\\(isaaclab_rl.__file__\\)\")",
+      "Read(//home/hugh/IsaacLab/source/isaaclab_rl/**)",
+      "Read(//home/hugh/IsaacLab/source/isaaclab_rl/isaaclab_rl/**)",
+      "Bash(python3 -c \"from isaaclab.utils import configclass; from dataclasses import asdict; help\\(asdict\\)\")",
+      "Read(//home/hugh/IsaacLab/source/isaaclab/**)",
+      "Read(//home/hugh/IsaacLab/source/isaaclab_tasks/**)"
+    ]
+  }
+}

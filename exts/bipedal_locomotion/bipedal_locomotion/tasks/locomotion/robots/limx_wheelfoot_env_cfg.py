@@ -17,6 +17,7 @@ from isaaclab.utils.noise import AdditiveGaussianNoiseCfg as GaussianNoise
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import SceneEntityCfg
 
 
@@ -397,13 +398,13 @@ class WFJumpCurriculumCfg(CurriculumCfg):
             "num_steps_per_env": 24,
         },
     )
-    disable_base_contact_termination = CurrTerm(
-        func=mdp.disable_termination,
-        params={
-            "term_name": "base_contact",
-            "num_steps": 1500 * 24,
-        },
-    )
+    # disable_base_contact_termination = CurrTerm(
+    #     func=mdp.disable_termination,
+    #     params={
+    #         "term_name": "base_contact",
+    #         "num_steps": 1500 * 24,
+    #     },
+    # )
 
 @configclass
 class WFJumpFlatEnvCfg(WFBaseEnvCfg):
@@ -515,6 +516,16 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
                 "threshold": 100.0,
+            },
+        )
+
+        # -- replace base_contact termination: only terminate when BOTH contact AND bad orientation
+        self.terminations.base_contact = DoneTerm(
+            func=mdp.base_contact_and_bad_orientation,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
+                "limit_angle": 1,
+                "threshold": 1.0,
             },
         )
 
