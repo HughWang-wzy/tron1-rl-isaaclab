@@ -493,13 +493,13 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "sigma": 0.1,
             },
         )
-        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
-        self.rewards.pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.03)
+        self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.005)
+        self.rewards.pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.005)
         self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03) 
         # self.rewards.pen_feet_distance = None
-        self.rewards.pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00016)
+        self.rewards.pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00002)
         self.rewards.pen_joint_vel_wheel_l2 = RewTerm(
-            func=mdp.joint_vel_l2, weight=-5e-3, params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")}
+            func=mdp.joint_vel_l2, weight=-1e-3, params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")}
         )
         self.rewards.pen_vel_non_wheel_l2 = RewTerm(
             func=mdp.joint_vel_l2,
