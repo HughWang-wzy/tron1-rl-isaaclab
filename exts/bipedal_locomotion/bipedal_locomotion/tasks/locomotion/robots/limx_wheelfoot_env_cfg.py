@@ -552,3 +552,6 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
 
         # higher jump probability for demo
         self.commands.base_jump.jump_probability = 0.5
+        # no assist force during play
+        self.commands.base_jump.assist_force_max = 0.0
+        self.curriculum = None

@@ -22,12 +22,11 @@ class JumpCommand(CommandTerm):
     standing_height is always sampled (even when not jumping) so the robot
     learns to control its base height during normal walking.
 
-    Optionally applies a decaying upward assist force when a jump is triggered
+    Optionally applies an upward assist force when a jump is triggered
     to bootstrap the learning signal.  The force is applied for
     ``cfg.assist_force_duration`` seconds at the start of each jump.
-    Its magnitude starts at ``cfg.assist_force_max`` and decays by
-    ``cfg.assist_decay_per_1000_iter * 100 %`` every 1000 RL iterations,
-    beginning at ``cfg.assist_decay_start_iteration``.  Set
+    Its magnitude ``cfg.assist_force_max`` is updated externally by a
+    curriculum term (see ``jump_assist_force_curriculum``).  Set
     ``assist_force_max = 0`` to disable the feature entirely.
     """
 
@@ -148,7 +147,7 @@ class JumpCommand(CommandTerm):
             self._assist_remaining.clamp_(min=0.0)
 
         robot.set_external_force_and_torque(
-            forces, torques, body_ids=[self._assist_body_id]
+            forces, torques, body_ids=[self._assist_body_id], is_global=True
         )
 
     def __str__(self) -> str:
@@ -159,8 +158,6 @@ class JumpCommand(CommandTerm):
         msg += f"\tStanding height range: {self.cfg.standing_height_range}\n"
         msg += f"\tAssist force max: {self.cfg.assist_force_max} N\n"
         msg += f"\tAssist duration: {self.cfg.assist_force_duration} s\n"
-        msg += f"\tAssist decay: -{self.cfg.assist_decay_per_1000_iter * 100:.0f}%/1000 iters "
-        msg += f"starting iter {self.cfg.assist_decay_start_iteration}\n"
         return msg
 
     def _set_debug_vis_impl(self, debug_vis: bool):

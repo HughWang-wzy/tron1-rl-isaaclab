@@ -78,7 +78,7 @@ class JumpCommandCfg(CommandTermCfg):
     # ------------------------------------------------------------------
     # Assist-force (magnitude updated each iteration by curriculum term)
     # ------------------------------------------------------------------
-    assist_force_max: float = 300.0
+    assist_force_max: float = 1000.0
     """Upward assist force [N] at jump trigger. Updated each iter by curriculum. Set 0 to disable."""
     assist_force_duration: float = 0.5
     """How long [s] the assist force is applied after each jump trigger."""
