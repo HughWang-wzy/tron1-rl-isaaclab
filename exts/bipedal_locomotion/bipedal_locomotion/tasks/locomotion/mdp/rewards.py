@@ -774,10 +774,10 @@ def jump_tuck_legs(
     """
     if tuck_angles is None:
         tuck_angles = {
-            "hip_L_joint": 1.15,
-            "knee_L_joint": 1.15,
-            "hip_R_joint": -1.15,
-            "knee_R_joint": -1.15,
+            "hip_L_Joint": 1.15,
+            "knee_L_Joint": 1.15,
+            "hip_R_Joint": -1.15,
+            "knee_R_Joint": -1.15,
         }
 
     asset: Articulation = env.scene[asset_cfg.name]
