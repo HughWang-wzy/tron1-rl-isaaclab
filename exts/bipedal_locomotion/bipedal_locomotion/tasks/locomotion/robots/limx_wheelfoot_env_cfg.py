@@ -394,7 +394,7 @@ class WFJumpCurriculumCfg(CurriculumCfg):
             "command_name": "base_jump",
             "force_max": 300.0,
             "decay_start_iteration": 2000,
-            "decay_per_1000_iter": 0.4,
+            "decay_per_1000_iter": 0.5,
             "num_steps_per_env": 24,
         },
     )
@@ -465,7 +465,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
-            weight=10.0,
+            weight=20.0,
             params={"command_name": "base_jump", "sigma": 0.1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),},
         )
         self.rewards.jump_upward_vel = RewTerm(
@@ -475,17 +475,9 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             },
         )
-        # self.rewards.jump_landing = RewTerm(
-        #     func=mdp.jump_landing_stability,
-        #     weight=1.0,
-        #     params={
-        #         "command_name": "base_jump",
-        #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
-        #     },
-        # )
         self.rewards.jump_tuck = RewTerm(
             func=mdp.jump_tuck_legs,
-            weight=20.0,
+            weight=5.0,
             params={
                 "command_name": "base_jump",
                 "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
@@ -520,7 +512,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
 
         self.rewards.undesired_contacts = RewTerm(
             func=mdp.undesired_contacts,
-            weight=-0.25,
+            weight=-1,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["abad_.*", "hip_.*", "knee_.*"]),
                 "threshold": 10.0,
