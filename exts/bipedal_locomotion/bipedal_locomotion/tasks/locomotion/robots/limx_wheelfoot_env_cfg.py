@@ -475,15 +475,29 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             },
         )
+        self.rewards.jump_flight_vel = RewTerm(
+            func=mdp.jump_flight_vel_tracking,
+            weight=2.0,
+            params={
+                "command_name": "base_jump",
+                "velocity_command_name": "base_velocity",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
+                "std": 0.25,
+            },
+        )
         self.rewards.jump_tuck = RewTerm(
             func=mdp.jump_tuck_legs,
             weight=5.0,
             params={
                 "command_name": "base_jump",
-                "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
-                "target_distance": 0.5,
-                "sigma": 0.2,
+                "tuck_angles": {
+                    "hip_L_joint": 1.15,
+                    "knee_L_joint": 1.15,
+                    "hip_R_joint": -1.15,
+                    "knee_R_joint": -1.15,
+                },
+                "sigma": 0.25,
             },
         )
         self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
@@ -586,8 +600,9 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.events.add_base_mass = None
 
         # higher jump probability for demo
-        self.commands.base_jump.jump_probability = 0.8
-        self.commands.base_jump.resampling_time_range = (5.0, 5.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-3.0, 3.0)
+        self.commands.base_jump.jump_probability = 1
+        self.commands.base_jump.resampling_time_range = (3.0, 3.0)
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
         self.curriculum = None

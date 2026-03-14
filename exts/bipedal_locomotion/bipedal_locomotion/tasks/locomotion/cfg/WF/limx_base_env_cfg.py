@@ -432,7 +432,10 @@ class RewardsCfg:
     # jump rewards (None by default, enabled in jump env configs)
     jump_height: RewTerm | None = None
     jump_landing: RewTerm | None = None
+    jump_upward_vel: RewTerm | None = None
+    jump_flight_vel: RewTerm | None = None
     jump_tuck: RewTerm | None = None
+    track_base_height: RewTerm | None = None
     pen_base_contact: RewTerm | None = None
     
     # pen_wheel_slide = RewTerm(

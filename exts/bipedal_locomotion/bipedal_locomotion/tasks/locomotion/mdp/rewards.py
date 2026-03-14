@@ -669,6 +669,39 @@ def jump_upward_vel(
     return jump_active * on_ground.float() * upward_vel
 
 
+def jump_flight_vel_tracking(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_jump",
+    velocity_command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    std: float = 0.25,
+) -> torch.Tensor:
+    """Track commanded xy velocity during flight phase.
+
+    Only active when jump_active=1 AND all feet are off the ground (in_flight).
+    Uses exp kernel on the xy velocity error to encourage maintaining
+    forward momentum while airborne.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    jump_cmd = env.command_manager.get_command(command_name)
+    vel_cmd = env.command_manager.get_command(velocity_command_name)
+    jump_active = jump_cmd[:, 0]
+
+    # in_flight = all feet off ground
+    forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
+    in_flight = torch.all(forces_z < 1.0, dim=1)
+
+    # xy velocity error
+    lin_vel_error = torch.sum(
+        torch.square(asset.data.root_lin_vel_b[:, :2] - vel_cmd[:, :2]), dim=1
+    )
+    reward = torch.exp(-lin_vel_error / (std ** 2))
+
+    return jump_active * in_flight.float() * reward
+
+
 def jump_height_reward(
     env: ManagerBasedRLEnv,
     command_name: str = "base_jump",
@@ -727,19 +760,26 @@ def jump_tuck_legs(
     command_name: str = "base_jump",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
-    target_distance: float = 0.5,
-    sigma: float = 0.05,
+    tuck_angles: dict[str, float] | None = None,
+    sigma: float = 0.25,
 ) -> torch.Tensor:
-    """Reward tucking legs during jump flight phase.
+    """Reward tucking legs to target joint angles during flight phase.
 
     During aerial phase (jump_active=1 AND both feet off ground), rewards
-    the vertical distance between wheel links and base_Link being close to
-    target_distance.  Below target_distance risks self-collision.
+    hip and knee joints being close to specified tuck angles.
 
     Args:
-        target_distance: ideal vertical gap between base and wheels [m].
-        sigma: exp kernel width. Smaller = sharper around target.
+        tuck_angles: dict mapping joint name to target angle (rad).
+        sigma: exp kernel width.
     """
+    if tuck_angles is None:
+        tuck_angles = {
+            "hip_L_joint": 1.15,
+            "knee_L_joint": 1.15,
+            "hip_R_joint": -1.15,
+            "knee_R_joint": -1.15,
+        }
+
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
@@ -749,15 +789,14 @@ def jump_tuck_legs(
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
     in_flight = torch.all(forces_z < 1.0, dim=1)
 
-    # vertical distance: base_z - wheel_z  (positive when wheels below base)
-    wheel_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]  # (num_envs, 2)
-    base_z = asset.data.root_pos_w[:, 2:3]  # (num_envs, 1)
-    vert_dist = base_z - wheel_z  # (num_envs, 2)
-    mean_dist = torch.mean(vert_dist, dim=1)
+    # compute joint angle error for tuck joints
+    total_error = torch.zeros(env.num_envs, device=env.device)
+    for joint_name, target_angle in tuck_angles.items():
+        joint_ids, _ = asset.find_joints(joint_name)
+        joint_pos = asset.data.joint_pos[:, joint_ids[0]]
+        total_error += torch.square(joint_pos - target_angle)
 
-    # reward being close to target_distance
-    error = mean_dist - target_distance
-    reward = torch.exp(-torch.square(error) / (sigma ** 2))
+    reward = torch.exp(-total_error / (sigma ** 2))
 
     return jump_active * in_flight.float() * reward
 
