@@ -459,14 +459,14 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         self.rewards.track_base_height = RewTerm(
             func=mdp.track_base_height_exp,
             weight=2.0,
-            params={"command_name": "base_jump", "sigma": 0.1},
+            params={"command_name": "base_jump", "sigma": 0.15},
         )
 
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
             func=mdp.jump_height_reward,
             weight=20.0,
-            params={"command_name": "base_jump", "sigma": 0.1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),},
+            params={"command_name": "base_jump", "sigma": 0.2,"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),},
         )
         self.rewards.jump_upward_vel = RewTerm(
             func=mdp.jump_upward_vel,
