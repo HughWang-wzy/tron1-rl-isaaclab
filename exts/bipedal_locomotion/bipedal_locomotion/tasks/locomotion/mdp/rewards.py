@@ -816,3 +816,90 @@ def base_contact_penalty(
     forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]  # (num_envs, n_bodies, 3)
     force_magnitude = torch.norm(forces, dim=-1).sum(dim=-1)  # (num_envs,)
     return torch.clamp(force_magnitude - threshold, min=0.0)
+
+
+# ===================== terrain-adaptive helpers =====================
+
+
+def _terrain_roughness_score(
+    sensor: RayCaster,
+    threshold: float = 0.03,
+) -> torch.Tensor:
+    """Compute a [0, 1] roughness score from height scan standard deviation.
+
+    Args:
+        sensor: RayCaster height scanner.
+        threshold: std threshold that maps to roughness=1.
+
+    Returns:
+        (num_envs,) tensor. 0 = flat, 1 = rough/stairs.
+    """
+    hits_z = sensor.data.ray_hits_w[..., 2]  # (N, num_rays)
+    hits_z = torch.nan_to_num(hits_z, nan=0.0, posinf=0.0, neginf=0.0)
+    roughness = torch.std(hits_z, dim=1)
+    return torch.clamp(roughness / threshold, 0.0, 1.0)
+
+
+def _terrain_forward_gradient(
+    sensor: RayCaster,
+    num_x: int = 11,
+    num_y: int = 11,
+) -> torch.Tensor:
+    """Compute forward height gradient from height scan grid.
+
+    The grid uses "xy" ordering with x as the fastest-varying dimension.
+    Positive x = forward in the robot frame (with attach_yaw_only=True).
+
+    Returns:
+        (num_envs,) tensor. >0 = uphill (stairs up), <0 = downhill, ~0 = flat.
+    """
+    hits_z = sensor.data.ray_hits_w[..., 2]  # (N, num_x * num_y)
+    hits_z = torch.nan_to_num(hits_z, nan=0.0, posinf=0.0, neginf=0.0)
+    hits_z = hits_z.view(-1, num_y, num_x)  # (N, num_y, num_x)
+
+    mid = num_x // 2
+    front = hits_z[:, :, mid + 1:]   # x > 0 (forward)
+    back = hits_z[:, :, :mid]        # x < 0 (backward)
+
+    gradient = front.mean(dim=(1, 2)) - back.mean(dim=(1, 2))
+    return gradient
+
+
+# ===================== terrain-adaptive rewards =====================
+
+
+def terrain_adaptive_wheel_penalty(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    roughness_threshold: float = 0.03,
+) -> torch.Tensor:
+    """Extra penalty on wheel velocity when terrain is rough/stairs.
+
+    On flat terrain (roughness ≈ 0) the penalty is zero.
+    On rough terrain (roughness → 1) the full L2 wheel-vel penalty applies.
+    """
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+    roughness = _terrain_roughness_score(sensor, roughness_threshold)
+    wheel_vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    return roughness * torch.sum(torch.square(wheel_vel), dim=1)
+
+
+def terrain_adaptive_gait_reward(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    roughness_threshold: float = 0.03,
+) -> torch.Tensor:
+    """Reward leg joint activity when terrain is rough/stairs.
+
+    On flat terrain (roughness ≈ 0) the reward is zero.
+    On rough terrain (roughness → 1) the robot is rewarded for active leg motion.
+    """
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+    roughness = _terrain_roughness_score(sensor, roughness_threshold)
+    leg_vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    leg_activity = torch.sum(torch.abs(leg_vel), dim=1)
+    return roughness * leg_activity
