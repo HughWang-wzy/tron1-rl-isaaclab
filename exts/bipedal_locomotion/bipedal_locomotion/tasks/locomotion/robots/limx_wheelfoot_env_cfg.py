@@ -9,6 +9,8 @@ from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
     BLIND_ROUGH_TERRAINS_PLAY_CFG,
     STAIRS_TERRAINS_CFG,
     STAIRS_TERRAINS_PLAY_CFG,
+    DOWN_STAIRS_TERRAINS_CFG,
+    DOWN_STAIRS_TERRAINS_PLAY_CFG,
 )
 
 from isaaclab.sensors import RayCasterCfg, patterns
@@ -606,3 +608,41 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
         self.curriculum = None
+
+
+#############################
+# Wheelfoot Jump Rough Environment
+#############################
+
+
+@configclass
+class WFJumpRoughEnvCfg(WFJumpFlatEnvCfg):
+    """Jump environment on down-stairs + slopes terrain (blind, no upstairs)."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # ===================== terrain (down stairs + slopes, no upstairs) =====================
+        self.scene.terrain.terrain_type = "generator"
+        self.scene.terrain.terrain_generator = DOWN_STAIRS_TERRAINS_CFG
+
+
+@configclass
+class WFJumpRoughEnvCfg_PLAY(WFJumpRoughEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.num_envs = 32
+        self.observations.policy.enable_corruption = False
+        self.events.push_robot = None
+        self.events.add_base_mass = None
+
+        self.commands.base_velocity.ranges.lin_vel_x = (-3.0, 3.0)
+        self.commands.base_jump.jump_probability = 1
+        self.commands.base_jump.resampling_time_range = (3.0, 3.0)
+        self.commands.base_jump.assist_force_max = 0.0
+        self.curriculum = None
+
+        # spawn randomly across terrain grid
+        self.scene.terrain.max_init_terrain_level = None
+        self.scene.terrain.terrain_generator = DOWN_STAIRS_TERRAINS_PLAY_CFG

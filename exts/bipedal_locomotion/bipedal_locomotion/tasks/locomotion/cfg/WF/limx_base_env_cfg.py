@@ -96,6 +96,7 @@ class CommandsCfg:
         ),
     )
     base_jump: mdp.JumpCommandCfg | None = None
+    gait_command: mdp.UniformGaitCommandCfg | None = None
 
 
 @configclass

@@ -160,3 +160,70 @@ STAIRS_TERRAINS_PLAY_CFG = TerrainGeneratorCfg(
     curriculum=True,
     difficulty_range=(1.0, 1.0),
 )
+
+
+##########################################
+# Down Stairs Terrain Configuration (no upstairs)
+##########################################
+
+DOWN_STAIRS_TERRAINS_CFG = TerrainGeneratorCfg(
+    seed=42,
+    size=(16.0, 16.0),
+    border_width=20.0,
+    num_rows=8,
+    num_cols=10,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=True,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(proportion=0.3),
+        "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.4,
+            step_height_range=(0.05, 0.20),
+            step_width=0.3,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.25
+        ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.25
+        ),
+    },
+    curriculum=True,
+    difficulty_range=(0.0, 1.0),
+)
+
+DOWN_STAIRS_TERRAINS_PLAY_CFG = TerrainGeneratorCfg(
+    seed=42,
+    size=(16.0, 16.0),
+    border_width=20.0,
+    num_rows=4,
+    num_cols=4,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=True,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(proportion=0.2),
+        "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.5,
+            step_height_range=(0.05, 0.20),
+            step_width=0.3,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.25
+        ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.25
+        ),
+    },
+    curriculum=True,
+    difficulty_range=(1.0, 1.0),
+)

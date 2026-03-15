@@ -1,8 +1,8 @@
 import gymnasium as gym
 
-from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import PF_TRON1AFlatPPORunnerCfg, WF_TRON1AFlatPPORunnerCfg, SF_TRON1AFlatPPORunnerCfg, WF_TRON1APPORunnerCfg, WF_TRON1AJumpPPORunnerCfg, WF_TRON1AMoEPPORunnerCfg
+from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import PF_TRON1AFlatPPORunnerCfg, WF_TRON1AFlatPPORunnerCfg, SF_TRON1AFlatPPORunnerCfg, WF_TRON1APPORunnerCfg, WF_TRON1AJumpPPORunnerCfg, WF_TRON1AMoEPPORunnerCfg, WF_TRON1AGaitPPORunnerCfg
 
-from . import limx_pointfoot_env_cfg, limx_wheelfoot_env_cfg, limx_solefoot_env_cfg, limx_wf_moe_env_cfg
+from . import limx_pointfoot_env_cfg, limx_wheelfoot_env_cfg, limx_solefoot_env_cfg, limx_wf_moe_env_cfg, limx_wheelfoot_gait_env_cfg
 
 ##
 # Create PPO runners for RSL-RL
@@ -19,6 +19,8 @@ limx_wf_runner_cfg = WF_TRON1APPORunnerCfg()
 limx_wf_jump_runner_cfg = WF_TRON1AJumpPPORunnerCfg()
 
 limx_wf_moe_runner_cfg = WF_TRON1AMoEPPORunnerCfg()
+
+limx_wf_gait_runner_cfg = WF_TRON1AGaitPPORunnerCfg()
 
 
 ##
@@ -73,7 +75,7 @@ gym.register(
 
 
 #############################
-# WF Environment
+# WF Rough Environment
 #############################
 gym.register(
     id="Isaac-Limx-WF",
@@ -86,7 +88,27 @@ gym.register(
 )
 
 gym.register(
+    id="Isaac-Limx-WF-Rough-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFRoughEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_runner_cfg,
+    },
+)
+
+gym.register(
     id="Isaac-Limx-WF-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFRoughEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-Rough-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -142,6 +164,29 @@ gym.register(
 )
 
 #############################
+# WF Jump Rough Environment
+#############################
+gym.register(
+    id="Isaac-Limx-WF-Jump-Rough-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFJumpRoughEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-Jump-Rough-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFJumpRoughEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,
+    },
+)
+
+#############################
 # WF MoE Flat Environment
 #############################
 gym.register(
@@ -161,5 +206,51 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wf_moe_env_cfg.WFMoEFlatEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_wf_moe_runner_cfg,
+    },
+)
+
+#############################
+# WF Gait Flat Environment
+#############################
+gym.register(
+    id="Isaac-Limx-WF-Gait-Flat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_gait_env_cfg.WFGaitFlatEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_gait_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-Gait-Flat-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_gait_env_cfg.WFGaitFlatEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_gait_runner_cfg,
+    },
+)
+
+#############################
+# WF Gait Rough Environment
+#############################
+gym.register(
+    id="Isaac-Limx-WF-Gait-Rough-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_gait_env_cfg.WFGaitRoughEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_gait_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-Gait-Rough-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_gait_env_cfg.WFGaitRoughEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_gait_runner_cfg,
     },
 )
