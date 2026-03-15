@@ -199,6 +199,7 @@ class PPO:
             old_actions_log_prob_batch,
             old_mu_batch,
             old_sigma_batch,
+            _expert_target_batch,
         ) in generator:
             encoder_out_batch = self.encoder.encode(obs_history_batch)
             commands_batch = group_commands_batch
