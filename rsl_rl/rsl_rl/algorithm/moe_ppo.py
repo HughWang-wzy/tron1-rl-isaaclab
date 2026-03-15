@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from rsl_rl.modules import MLP_Encoder
@@ -61,6 +62,7 @@ class MoEPPO:
         early_stop=False,
         anneal_lr=False,
         moe_aux_loss_coef=0.1,
+        router_supervision_coef=0.5,
         device="cpu",
         **kwargs,
     ):
@@ -75,6 +77,7 @@ class MoEPPO:
         self.vae_beta = vae_beta
         self.critic_take_latent = critic_take_latent
         self.moe_aux_loss_coef = moe_aux_loss_coef
+        self.router_supervision_coef = router_supervision_coef
 
         self.encoder = encoder
 
@@ -108,6 +111,7 @@ class MoEPPO:
         # MoE tracking
         self.mean_aux_loss = 0.0
         self.mean_gate_entropy = 0.0
+        self.mean_router_loss = 0.0
         self.expert_utilization = None
 
     def init_storage(
@@ -119,6 +123,7 @@ class MoEPPO:
         obs_history_shape,
         commands_shape,
         action_shape,
+        expert_target_shape=None,
     ):
         self.storage = RolloutStorage(
             num_envs,
@@ -129,6 +134,7 @@ class MoEPPO:
             commands_shape,
             action_shape,
             self.device,
+            expert_target_shape=expert_target_shape,
         )
 
     def test_mode(self):
@@ -183,6 +189,7 @@ class MoEPPO:
         mean_surrogate_loss = 0
         mean_kl = 0
         mean_aux_loss = 0
+        mean_router_loss = 0
         total_gate_probs = None
 
         generator = self.storage.mini_batch_generator(
@@ -202,6 +209,7 @@ class MoEPPO:
             old_actions_log_prob_batch,
             old_mu_batch,
             old_sigma_batch,
+            expert_target_batch,
         ) in generator:
             encoder_out_batch = self.encoder.encode(obs_history_batch)
             commands_batch = group_commands_batch
@@ -277,6 +285,15 @@ class MoEPPO:
             gate_probs = self.actor_critic.gate_probs  # (batch, num_experts)
             aux_loss = compute_moe_aux_loss(gate_probs, self.actor_critic.num_experts)
 
+            # Router supervision loss (BCE between gate_probs[:, 1] and gait_needed target)
+            router_loss = torch.tensor(0.0, device=self.device)
+            if expert_target_batch is not None and self.router_supervision_coef > 0:
+                # expert_target_batch: (batch, 1) — gait_needed_score in [0, 1]
+                # gate_probs[:, 1] — probability of selecting expert 1 (gait expert)
+                gait_gate = gate_probs[:, 1]  # (batch,)
+                gait_target = expert_target_batch.squeeze(-1).detach()  # (batch,)
+                router_loss = F.binary_cross_entropy(gait_gate, gait_target)
+
             # Track gate statistics
             with torch.inference_mode():
                 if total_gate_probs is None:
@@ -290,6 +307,7 @@ class MoEPPO:
                 + self.value_loss_coef * value_loss
                 - self.entropy_coef * entropy_batch_mean
                 + self.moe_aux_loss_coef * aux_loss
+                + self.router_supervision_coef * router_loss
             )
 
             if self.anneal_lr:
@@ -311,6 +329,7 @@ class MoEPPO:
             mean_surrogate_loss += surrogate_loss.item()
             mean_kl += kl_mean.item()
             mean_aux_loss += aux_loss.item()
+            mean_router_loss += router_loss.item()
 
         # Encoder update (same as PPO)
         num_updates_extra = 0
@@ -347,12 +366,14 @@ class MoEPPO:
             mean_surrogate_loss /= num_updates
             mean_kl /= num_updates
             mean_aux_loss /= num_updates
+            mean_router_loss /= num_updates
             total_gate_probs /= num_updates
         if num_updates_extra > 0:
             mean_extra_loss /= num_updates_extra
 
         # Store MoE statistics for logging
         self.mean_aux_loss = mean_aux_loss
+        self.mean_router_loss = mean_router_loss
         if total_gate_probs is not None:
             self.expert_utilization = total_gate_probs.cpu().numpy()
             eps = 1e-8

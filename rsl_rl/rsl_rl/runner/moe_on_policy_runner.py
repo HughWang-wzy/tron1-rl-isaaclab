@@ -69,6 +69,12 @@ class MoEOnPolicyRunner:
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
 
+        # Check if expert_target observation group is available
+        self.has_expert_target = "expert_target" in obs_dict
+        expert_target_shape = None
+        if self.has_expert_target:
+            expert_target_shape = [obs_dict["expert_target"].shape[1]]
+
         # Init storage
         self.alg.init_storage(
             self.env.num_envs,
@@ -78,6 +84,7 @@ class MoEOnPolicyRunner:
             [self.obs_history_len * self.num_obs],
             [self.num_commands],
             [self.env.num_actions],
+            expert_target_shape=expert_target_shape,
         )
 
         self.obs_mean = torch.tensor(0, dtype=torch.float, device=self.device, requires_grad=False)
@@ -124,6 +131,11 @@ class MoEOnPolicyRunner:
             critic_obs.to(self.device),
         )
 
+        # Expert target for current state (aligned with obs used by router)
+        expert_target = None
+        if self.has_expert_target:
+            expert_target = obs_dict["expert_target"].to(self.device)
+
         self.alg.actor_critic.train()
 
         ep_infos = []
@@ -156,7 +168,14 @@ class MoEOnPolicyRunner:
                         rewards.to(self.device),
                         dones.to(self.device),
                     )
+                    # Store expert target for MoE router supervision (current state)
+                    if self.has_expert_target:
+                        self.alg.transition.expert_target = expert_target
                     self.alg.process_env_step(rewards, dones, infos, obs)
+
+                    # Update expert_target for next step
+                    if self.has_expert_target:
+                        expert_target = infos["observations"]["expert_target"].to(self.device)
 
                     if self.log_dir is not None:
                         if "episode" in infos:
@@ -239,6 +258,7 @@ class MoEOnPolicyRunner:
 
         # MoE-specific logging
         self.writer.add_scalar("Loss/moe_aux", self.alg.mean_aux_loss, locs["it"])
+        self.writer.add_scalar("Loss/router_supervision", self.alg.mean_router_loss, locs["it"])
         self.writer.add_scalar("MoE/gate_entropy", self.alg.mean_gate_entropy, locs["it"])
         if self.alg.expert_utilization is not None:
             for i, util in enumerate(self.alg.expert_utilization):
@@ -261,6 +281,7 @@ class MoEOnPolicyRunner:
                 f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
                 f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
                 f"""{'MoE aux loss:':>{pad}} {self.alg.mean_aux_loss:.4f}\n"""
+                f"""{'Router supervision:':>{pad}} {self.alg.mean_router_loss:.4f}\n"""
                 f"""{'Mean action noise std:':>{pad}} {mean_std.item():.4f}\n"""
                 f"""{'Learning rate:':>{pad}} {self.alg.learning_rate:.4f}\n"""
                 f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""

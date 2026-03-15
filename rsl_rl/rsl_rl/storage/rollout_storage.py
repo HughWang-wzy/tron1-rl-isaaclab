@@ -47,6 +47,7 @@ class RolloutStorage:
             self.action_mean = None
             self.action_sigma = None
             self.hidden_states = None
+            self.expert_target = None
 
         def clear(self):
             self.__init__()
@@ -61,6 +62,7 @@ class RolloutStorage:
         commands_shape,
         actions_shape,
         device="cpu",
+        expert_target_shape=None,
     ):
         self.device = device
 
@@ -122,6 +124,14 @@ class RolloutStorage:
         self.num_transitions_per_env = num_transitions_per_env
         self.num_envs = num_envs
 
+        # Expert target for MoE router supervision (optional)
+        if expert_target_shape is not None:
+            self.expert_target = torch.zeros(
+                num_transitions_per_env, num_envs, *expert_target_shape, device=self.device
+            )
+        else:
+            self.expert_target = None
+
         # rnn
         self.saved_hidden_states_a = None
         self.saved_hidden_states_c = None
@@ -144,6 +154,8 @@ class RolloutStorage:
         self.actions_log_prob[self.step].copy_(transition.actions_log_prob.view(-1, 1))
         self.mu[self.step].copy_(transition.action_mean)
         self.sigma[self.step].copy_(transition.action_sigma)
+        if self.expert_target is not None and transition.expert_target is not None:
+            self.expert_target[self.step].copy_(transition.expert_target)
         self._save_hidden_states(transition.hidden_states)
         self.step += 1
 
@@ -248,6 +260,11 @@ class RolloutStorage:
         group_old_mu = self.mu[:, group_group_idx, :].flatten(0, 1)
         group_old_sigma = self.sigma[:, group_group_idx, :].flatten(0, 1)
 
+        if self.expert_target is not None:
+            group_expert_target = self.expert_target[:, group_group_idx, :].flatten(0, 1)
+        else:
+            group_expert_target = None
+
         for epoch in range(num_epochs):
             for i in range(num_mini_batches):
                 group_start = i * group_mini_batch_size
@@ -258,7 +275,7 @@ class RolloutStorage:
                 obs_batch = group_obs_batch
                 group_critic_obs_batch = group_critic_obs[group_batch_idx]
                 critic_obs_batch = group_critic_obs_batch
-                
+
                 group_obs_history_batch = group_obs_history[group_batch_idx]
                 obs_history_batch = group_obs_history_batch
 
@@ -284,7 +301,15 @@ class RolloutStorage:
                 group_old_sigma_batch = group_old_sigma[group_batch_idx]
                 old_sigma_batch = group_old_sigma_batch
 
-                yield obs_batch, critic_obs_batch, obs_history_batch, group_obs_history_batch, group_commands_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch,
+                expert_target_batch = None
+                if group_expert_target is not None:
+                    expert_target_batch = group_expert_target[group_batch_idx]
+
+                yield (obs_batch, critic_obs_batch, obs_history_batch,
+                       group_obs_history_batch, group_commands_batch,
+                       actions_batch, target_values_batch, advantages_batch,
+                       returns_batch, old_actions_log_prob_batch,
+                       old_mu_batch, old_sigma_batch, expert_target_batch)
 
     def encoder_mini_batch_generator(self, num_mini_batches, num_epochs=8):
         batch_size = self.num_envs * self.num_transitions_per_env

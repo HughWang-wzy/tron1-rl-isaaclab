@@ -821,25 +821,6 @@ def base_contact_penalty(
 # ===================== terrain-adaptive helpers =====================
 
 
-def _terrain_roughness_score(
-    sensor: RayCaster,
-    threshold: float = 0.03,
-) -> torch.Tensor:
-    """Compute a [0, 1] roughness score from height scan standard deviation.
-
-    Args:
-        sensor: RayCaster height scanner.
-        threshold: std threshold that maps to roughness=1.
-
-    Returns:
-        (num_envs,) tensor. 0 = flat, 1 = rough/stairs.
-    """
-    hits_z = sensor.data.ray_hits_w[..., 2]  # (N, num_rays)
-    hits_z = torch.nan_to_num(hits_z, nan=0.0, posinf=0.0, neginf=0.0)
-    roughness = torch.std(hits_z, dim=1)
-    return torch.clamp(roughness / threshold, 0.0, 1.0)
-
-
 def _terrain_forward_gradient(
     sensor: RayCaster,
     num_x: int = 11,
@@ -865,41 +846,148 @@ def _terrain_forward_gradient(
     return gradient
 
 
+def _stair_edge_score(
+    sensor: RayCaster,
+    step_edge_threshold: float = 0.03,
+    num_x: int = 11,
+    num_y: int = 11,
+) -> torch.Tensor:
+    """Detect stairs by counting discrete height step edges in the height scan.
+
+    Computes height differences between adjacent rays along the x (forward)
+    direction. A stair edge produces a sharp height jump (e.g. 0.1-0.2m),
+    while a slope has small, uniform differences.
+
+    Args:
+        sensor: RayCaster height scanner.
+        step_edge_threshold: minimum height difference (m) to count as a step edge.
+        num_x: grid points along x.
+        num_y: grid points along y.
+
+    Returns:
+        (num_envs,) tensor. Normalized step-edge count in [0, 1].
+        0 = no edges (flat/slope), 1 = many edges (stairs).
+    """
+    hits_z = sensor.data.ray_hits_w[..., 2]  # (N, num_x * num_y)
+    hits_z = torch.nan_to_num(hits_z, nan=0.0, posinf=0.0, neginf=0.0)
+    hits_z = hits_z.view(-1, num_y, num_x)  # (N, num_y, num_x)
+
+    # height difference between adjacent points along x (forward direction)
+    diffs = torch.abs(hits_z[:, :, 1:] - hits_z[:, :, :-1])  # (N, num_y, num_x-1)
+    # count jumps exceeding threshold
+    step_count = (diffs > step_edge_threshold).float().sum(dim=(1, 2))  # (N,)
+    # normalize: max possible edges = num_y * (num_x - 1)
+    max_edges = num_y * (num_x - 1)
+    return torch.clamp(step_count / max_edges, 0.0, 1.0)
+
+
+def _uphill_stairs_score(
+    sensor: RayCaster,
+    gradient_threshold: float = 0.02,
+    step_edge_threshold: float = 0.03,
+    num_x: int = 11,
+    num_y: int = 11,
+) -> torch.Tensor:
+    """Compute [0, 1] uphill-stairs score: 1 when climbing stairs, 0 on flat/slope/downhill.
+
+    Combines two signals:
+      - Forward gradient: front rays higher than back rays (uphill)
+      - Step edges: discrete height jumps between adjacent rays (stairs, not slope)
+
+    Only when BOTH uphill AND step edges are present does the score approach 1.
+    Smooth slopes have few step edges → score ≈ 0.
+    """
+    gradient = _terrain_forward_gradient(sensor, num_x, num_y)
+    stair_edges = _stair_edge_score(sensor, step_edge_threshold, num_x, num_y)
+    # only positive gradient = uphill; clamp negatives to 0
+    uphill = torch.clamp(gradient / gradient_threshold, 0.0, 1.0)
+    # multiply: need both uphill AND step edges to trigger
+    return uphill * stair_edges
+
+
 # ===================== terrain-adaptive rewards =====================
+
+
+def _gait_needed_score(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    gradient_threshold: float = 0.02,
+    step_edge_threshold: float = 0.03,
+    lateral_vel_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Compute [0, 1] score indicating whether gait (legged locomotion) is needed.
+
+    Gait is needed when either:
+      1. Climbing upstairs (uphill + step edges detected)
+      2. Lateral velocity (Vy) is commanded (wheels can't move sideways)
+
+    Returns the max of the two signals, clamped to [0, 1].
+    """
+    # --- stair detection ---
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    stairs = _uphill_stairs_score(sensor, gradient_threshold, step_edge_threshold)
+
+    # --- lateral velocity command ---
+    vel_cmd = env.command_manager.get_command(command_name)
+    vy = torch.abs(vel_cmd[:, 1])  # lateral velocity command
+    lateral = torch.clamp(vy / lateral_vel_threshold, 0.0, 1.0)
+
+    # either condition triggers gait
+    return torch.max(stairs, lateral)
 
 
 def terrain_adaptive_wheel_penalty(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    roughness_threshold: float = 0.03,
+    command_name: str = "base_velocity",
+    gradient_threshold: float = 0.02,
+    step_edge_threshold: float = 0.03,
+    lateral_vel_threshold: float = 0.1,
 ) -> torch.Tensor:
-    """Extra penalty on wheel velocity when terrain is rough/stairs.
+    """Extra penalty on wheel velocity when gait is needed (stairs or lateral movement).
 
-    On flat terrain (roughness ≈ 0) the penalty is zero.
-    On rough terrain (roughness → 1) the full L2 wheel-vel penalty applies.
+    On flat ground with no lateral command the penalty is zero.
     """
-    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    gait_score = _gait_needed_score(
+        env, sensor_cfg, command_name, gradient_threshold, step_edge_threshold, lateral_vel_threshold
+    )
     asset: Articulation = env.scene[asset_cfg.name]
-    roughness = _terrain_roughness_score(sensor, roughness_threshold)
     wheel_vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
-    return roughness * torch.sum(torch.square(wheel_vel), dim=1)
+    return gait_score * torch.sum(torch.square(wheel_vel), dim=1)
 
 
 def terrain_adaptive_gait_reward(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    roughness_threshold: float = 0.03,
+    contact_sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    gradient_threshold: float = 0.02,
+    step_edge_threshold: float = 0.03,
+    lateral_vel_threshold: float = 0.1,
+    air_time_threshold: float = 0.5,
 ) -> torch.Tensor:
-    """Reward leg joint activity when terrain is rough/stairs.
+    """Reward biped gait (alternating single stance) when gait is needed.
 
-    On flat terrain (roughness ≈ 0) the reward is zero.
-    On rough terrain (roughness → 1) the robot is rewarded for active leg motion.
+    Uses feet_air_time_positive_biped-style reward:
+      - Rewards single-stance phases (one foot in air, one on ground)
+      - Clamped by air_time_threshold
+
+    Gated by gait_needed_score: only active on stairs or lateral movement.
     """
-    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
-    asset: Articulation = env.scene[asset_cfg.name]
-    roughness = _terrain_roughness_score(sensor, roughness_threshold)
-    leg_vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
-    leg_activity = torch.sum(torch.abs(leg_vel), dim=1)
-    return roughness * leg_activity
+    gait_score = _gait_needed_score(
+        env, sensor_cfg, command_name, gradient_threshold, step_edge_threshold, lateral_vel_threshold
+    )
+
+    # biped gait reward: single stance with alternating feet
+    contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, contact_sensor_cfg.body_ids]
+    contact_time = contact_sensor.data.current_contact_time[:, contact_sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    in_mode_time = torch.where(in_contact, contact_time, air_time)
+    single_stance = torch.sum(in_contact.int(), dim=1) == 1
+    reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
+    reward = torch.clamp(reward, max=air_time_threshold)
+
+    return gait_score * reward

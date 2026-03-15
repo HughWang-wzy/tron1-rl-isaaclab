@@ -195,3 +195,32 @@ def feet_contact_state(
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
     return (forces_z > threshold).float()
+
+
+def gait_phase(env: ManagerBasedRLEnv, period: float = 0.7) -> torch.Tensor:
+    """Gait phase clock as [sin(2*pi*t/T), cos(2*pi*t/T)]. Shape: (num_envs, 2)."""
+    t = env.episode_length_buf * env.step_dt
+    phase = 2 * torch.pi * t / period
+    return torch.stack([torch.sin(phase), torch.cos(phase)], dim=-1)
+
+
+def gait_needed_score(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    gradient_threshold: float = 0.02,
+    step_edge_threshold: float = 0.03,
+    lateral_vel_threshold: float = 0.1,
+) -> torch.Tensor:
+    """[0, 1] score indicating whether gait (legged locomotion) is needed.
+
+    Wraps the private _gait_needed_score from rewards.py for use as an
+    observation term. Shape: (num_envs, 1).
+    """
+    from bipedal_locomotion.tasks.locomotion.mdp.rewards import _gait_needed_score
+
+    score = _gait_needed_score(
+        env, sensor_cfg, command_name,
+        gradient_threshold, step_edge_threshold, lateral_vel_threshold,
+    )
+    return score.unsqueeze(-1)

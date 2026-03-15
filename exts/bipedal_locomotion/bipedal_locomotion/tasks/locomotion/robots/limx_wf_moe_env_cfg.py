@@ -13,7 +13,7 @@ from isaaclab.terrains import (
 
 from bipedal_locomotion.assets.config.wheelfoot_cfg import WHEELFOOT_CFG
 from bipedal_locomotion.tasks.locomotion.robots.limx_wheelfoot_env_cfg import WFBaseEnvCfg, WFJumpCurriculumCfg
-from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import RewardsCfg
+from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import RewardsCfg, ObservarionsCfg
 from bipedal_locomotion.tasks.locomotion import mdp
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -238,21 +238,28 @@ class WFMoERewardsCfg(RewardsCfg):
         },
     )
 
-    # ---- terrain-adaptive rewards ----
+    # ---- terrain-adaptive rewards (uphill stairs or lateral velocity) ----
     pen_terrain_wheel_vel = RewTerm(
         func=mdp.terrain_adaptive_wheel_penalty, weight=-0.05,
         params={
             "sensor_cfg": SceneEntityCfg("height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+"),
-            "roughness_threshold": 0.03,
+            "command_name": "base_velocity",
+            "gradient_threshold": 0.02,
+            "step_edge_threshold": 0.03,
+            "lateral_vel_threshold": 0.1,
         },
     )
     rew_terrain_gait = RewTerm(
         func=mdp.terrain_adaptive_gait_reward, weight=1.0,
         params={
             "sensor_cfg": SceneEntityCfg("height_scanner"),
-            "asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*"),
-            "roughness_threshold": 0.03,
+            "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
+            "command_name": "base_velocity",
+            "gradient_threshold": 0.02,
+            "step_edge_threshold": 0.03,
+            "lateral_vel_threshold": 0.1,
+            "air_time_threshold": 0.5,
         },
     )
 
@@ -335,11 +342,28 @@ class WFMoEFlatEnvCfg(WFBaseEnvCfg):
         self.observations.commands.jump_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "base_jump"}
         )
+        # gait phase clock → reference signal for alternating leg swing
+        self.observations.commands.gait_phase = ObsTerm(
+            func=mdp.gait_phase, params={"period": 0.7}
+        )
 
         # feet contact state → privileged critic observation
         self.observations.critic.feet_contact = ObsTerm(
             func=mdp.feet_contact_state,
             params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*")},
+        )
+
+        # ===================== expert target (router supervision) =====================
+        self.observations.expert_target = ObservarionsCfg.ExpertTargetCfg()
+        self.observations.expert_target.gait_score = ObsTerm(
+            func=mdp.gait_needed_score,
+            params={
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+                "command_name": "base_velocity",
+                "gradient_threshold": 0.02,
+                "step_edge_threshold": 0.03,
+                "lateral_vel_threshold": 0.1,
+            },
         )
 
         # ===================== terminations =====================

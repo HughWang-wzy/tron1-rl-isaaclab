@@ -48,6 +48,7 @@ class MoEPpoAlgorithmCfg(RslRlPpoAlgorithmMlpCfg):
 
     class_name: str = "MoEPPO"
     moe_aux_loss_coef: float = 0.1
+    router_supervision_coef: float = 0.5
 
 
 import os

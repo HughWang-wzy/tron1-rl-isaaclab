@@ -213,10 +213,19 @@ class ObservarionsCfg:
     class CommandsObsCfg(ObsGroup):
         velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
 
+    @configclass
+    class ExpertTargetCfg(ObsGroup):
+        """Expert target for MoE router supervision (empty by default, filled in MoE env)."""
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     commands: CommandsObsCfg = CommandsObsCfg()
     obsHistory: HistoryObsCfg = HistoryObsCfg()
+    expert_target: ExpertTargetCfg | None = None
 
 
 @configclass
