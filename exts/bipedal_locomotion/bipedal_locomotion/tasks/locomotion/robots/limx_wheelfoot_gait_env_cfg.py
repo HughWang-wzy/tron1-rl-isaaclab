@@ -194,15 +194,6 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
         self.observations.commands.height_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "height_command"}
         )
-        self.observations.obsHistory.gait_command = ObsTerm(
-            func=mdp.get_gait_command, params={"command_name": "gait_command"},
-            noise=GaussianNoise(mean=0.0, std=0.01),
-        )
-        self.observations.obsHistory.height_command = ObsTerm(
-            func=mdp.generated_commands, params={"command_name": "height_command"},
-            noise=GaussianNoise(mean=0.0, std=0.01),
-        )
-
         # ===================== velocity command =====================
         self.commands.base_velocity = mdp.UniformLevelVelocityCommandCfg(
             asset_name="robot",
