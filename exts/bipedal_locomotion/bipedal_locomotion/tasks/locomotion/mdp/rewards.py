@@ -342,6 +342,24 @@ def base_com_height(
     return torch.abs(asset.data.root_pos_w[:, 2] - adjusted_target_height)
 
 
+def track_base_height_from_command(
+    env: ManagerBasedRLEnv,
+    command_name: str = "height_command",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sigma: float = 0.1,
+) -> torch.Tensor:
+    """Track commanded base height using exp kernel.
+
+    Reads target_height from the height command.
+    Returns exp(-error^2 / sigma^2), rewarding being close to the target.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    height_cmd = env.command_manager.get_command(command_name)
+    target_height = height_cmd[:, 0]  # shape: (num_envs,)
+    error = asset.data.root_pos_w[:, 2] - target_height
+    return torch.exp(-torch.square(error) / (sigma ** 2))
+
+
 class GaitReward(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
         """Initialize the term.

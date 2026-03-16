@@ -32,7 +32,7 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- velocity tracking ----
     rew_lin_vel_xy = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=3.0,
+        func=mdp.track_lin_vel_xy_exp, weight=2.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.2)},
     )
     rew_ang_vel_z = RewTerm(
@@ -53,7 +53,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     # ---- gait reward (force + velocity tracking for alternating contact) ----
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=1.0,
+        weight=2.0,
         params={
             "tracking_contacts_shaped_force": -2.0,
             "tracking_contacts_shaped_vel": -2.0,
@@ -70,14 +70,18 @@ class WFGaitRewardsCfg(RewardsCfg):
     pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
     pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.3)
     pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-10.0)
-    pen_base_height = RewTerm(func=mdp.base_com_height, params={"target_height": 0.80}, weight=-30.0)
+    pen_base_height: RewTerm | None = None
+    track_base_height = RewTerm(
+        func=mdp.track_base_height_from_command, weight=2.0,
+        params={"command_name": "height_command", "sigma": 0.15},
+    )
     pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
     pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.03)
-    pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00008)
+    pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.0008)
     pen_joint_accel = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    pen_joint_power_l1 = RewTerm(func=mdp.joint_powers_l1, weight=-2e-5)
+    pen_joint_power_l1 = RewTerm(func=mdp.joint_powers_l1, weight=-2e-4)
     pen_non_wheel_pos_limits = RewTerm(
-        func=mdp.joint_pos_limits, weight=-2.0,
+        func=mdp.joint_pos_limits, weight=-10.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
     )
 
@@ -93,8 +97,8 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- feet distance ----
     pen_feet_distance = RewTerm(
-        func=mdp.feet_distance, weight=-100,
-        params={"min_feet_distance": 0.32, "max_feet_distance": 0.35, "feet_links_name": ["wheel_[RL]_Link"]},
+        func=mdp.feet_distance, weight=-10,
+        params={"min_feet_distance": 0.25, "max_feet_distance": 0.45, "feet_links_name": ["wheel_[RL]_Link"]},
     )
 
     # ---- contact penalties ----
@@ -175,17 +179,27 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
             ),
         )
 
+        # ===================== height command =====================
+        self.commands.height_command = mdp.HeightCommandCfg(
+            resampling_time_range=(10.0, 10.0),
+            debug_vis=False,
+            min_height=0.70,
+            max_height=0.90,
+        )
+
         # ===================== observations =====================
-        # gait command → policy / obsHistory need to know gait parameters
         self.observations.commands.gait_command = ObsTerm(
             func=mdp.get_gait_command, params={"command_name": "gait_command"}
         )
-        self.observations.policy.gait_command = ObsTerm(
-            func=mdp.get_gait_command, params={"command_name": "gait_command"},
-            noise=GaussianNoise(mean=0.0, std=0.01),
+        self.observations.commands.height_command = ObsTerm(
+            func=mdp.generated_commands, params={"command_name": "height_command"}
         )
         self.observations.obsHistory.gait_command = ObsTerm(
             func=mdp.get_gait_command, params={"command_name": "gait_command"},
+            noise=GaussianNoise(mean=0.0, std=0.01),
+        )
+        self.observations.obsHistory.height_command = ObsTerm(
+            func=mdp.generated_commands, params={"command_name": "height_command"},
             noise=GaussianNoise(mean=0.0, std=0.01),
         )
 
