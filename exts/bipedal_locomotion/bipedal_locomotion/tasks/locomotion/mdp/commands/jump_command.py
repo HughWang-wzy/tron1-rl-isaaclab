@@ -136,7 +136,7 @@ class JumpCommand(CommandTerm):
         # landing = was in flight last step, now has contact
         landed = self._prev_in_flight & any_contact
         self._prev_in_flight = in_flight
-
+        
         # --- jump window countdown (max timeout safety net) ---
         active_mask = self.jump_cmd[:, 0] > 0.5
         if active_mask.any():
@@ -149,9 +149,9 @@ class JumpCommand(CommandTerm):
         # --- assist force ---
         if self._assist_body_id is None:
             return
-
         assist_mask = self._assist_remaining > 0.0
         robot = self._env.scene["robot"]
+        robot.permanent_wrench_composer.reset()
 
         # forces shape: (num_envs, 1, 3) — only the base body
         forces = torch.zeros(self.num_envs, 1, 3, device=self.device)

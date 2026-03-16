@@ -64,6 +64,52 @@ def apply_external_force_torque_stochastic(
     # note: these are only applied when you call: `asset.write_data_to_sim()`
     asset.permanent_wrench_composer.set_forces_and_torques(forces, torques, env_ids=masked_env_ids, body_ids=asset_cfg.body_ids)
 
+def apply_external_force_torque_stochastic_additional(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    force_range: dict[str, tuple[float, float]],
+    torque_range: dict[str, tuple[float, float]],
+    probability: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Randomize the external forces and torques applied to the bodies.
+
+    This function creates a set of random forces and torques sampled from the given ranges. The number of forces
+    and torques is equal to the number of bodies times the number of environments. The forces and torques are
+    applied to the bodies by calling ``asset.permanent_wrench_composer.set_forces_and_torques``. The forces and torques are only
+    applied when ``asset.write_data_to_sim()`` is called in the environment.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    # clear the existing forces and torques
+    # asset.permanent_wrench_composer.reset()
+    asset.instantaneous_wrench_composer.reset()
+
+    # resolve environment ids
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+
+    random_values = torch.rand(env_ids.shape, device=env_ids.device)
+    mask = random_values < probability
+    masked_env_ids = env_ids[mask]
+
+    if len(masked_env_ids) == 0:
+        return
+
+    # resolve number of bodies
+    num_bodies = len(asset_cfg.body_ids) if isinstance(asset_cfg.body_ids, list) else asset.num_bodies
+
+    # sample random forces and torques
+    size = (len(masked_env_ids), num_bodies, 3)
+    force_range_list = [force_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z"]]
+    force_range = torch.tensor(force_range_list, device=asset.device)
+    forces = math_utils.sample_uniform(force_range[:, 0], force_range[:, 1], size, asset.device)
+    torque_range_list = [torque_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z"]]
+    torque_range = torch.tensor(torque_range_list, device=asset.device)
+    torques = math_utils.sample_uniform(torque_range[:, 0], torque_range[:, 1], size, asset.device)
+    # set the forces and torques into the buffers
+    # note: these are only applied when you call: `asset.write_data_to_sim()`
+    asset.permanent_wrench_composer.set_forces_and_torques(forces, torques, env_ids=masked_env_ids, body_ids=asset_cfg.body_ids)
 
 def randomize_rigid_body_mass_inertia(
     env: ManagerBasedEnv,

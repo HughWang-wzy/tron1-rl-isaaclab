@@ -21,6 +21,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import EventTermCfg as EventTerm
 
 
 ######################
@@ -588,6 +589,24 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 ang_vel_z=(-math.pi, math.pi),
                 heading=(-math.pi, math.pi),
             ),
+        )
+        
+        self.events.push_robot = EventTerm(
+            func=mdp.apply_external_force_torque_stochastic_additional,
+            mode="interval",
+            interval_range_s=(0.0, 0.0),
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names="base_Link"),
+                "force_range": {
+                    "x": (-500.0, 500.0),
+                    "y": (-500.0, 500.0),
+                    "z": (-0.0, 0.0),
+                },  # force = mass * dv / dt
+                "torque_range": {"x": (-50.0, 50.0), "y": (-50.0, 50.0), "z": (-0.0, 0.0)},
+                "probability": 0.002,  # Expect step = 1 / probability
+            },
+            is_global_time=False,
+            min_step_count_between_reset=0,
         )
 
 
