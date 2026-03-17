@@ -2,7 +2,7 @@ import gymnasium as gym
 
 from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import PF_TRON1AFlatPPORunnerCfg, WF_TRON1AFlatPPORunnerCfg, SF_TRON1AFlatPPORunnerCfg, WF_TRON1APPORunnerCfg, WF_TRON1AJumpPPORunnerCfg, WF_TRON1AMoEPPORunnerCfg, WF_TRON1AGaitPPORunnerCfg
 
-from . import limx_pointfoot_env_cfg, limx_wheelfoot_env_cfg, limx_solefoot_env_cfg, limx_wf_moe_env_cfg, limx_wheelfoot_gait_env_cfg
+from . import limx_pointfoot_env_cfg, limx_wheelfoot_env_cfg, limx_solefoot_env_cfg, limx_wf_moe_env_cfg, limx_wheelfoot_gait_env_cfg, limx_wf_multiexpert_env_cfg
 
 ##
 # Create PPO runners for RSL-RL
@@ -252,5 +252,28 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wheelfoot_gait_env_cfg.WFGaitRoughEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_wf_gait_runner_cfg,
+    },
+)
+
+#############################
+# WF MultiExpert Flat Environment  (Jump + Gait student for multi-expert distillation)
+#############################
+gym.register(
+    id="Isaac-Limx-WF-MultiExpert-Flat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wf_multiexpert_env_cfg.WFMultiExpertFlatEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,  # placeholder; distillation uses its own runner
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-MultiExpert-Flat-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wf_multiexpert_env_cfg.WFMultiExpertFlatEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,  # placeholder; distillation uses its own runner
     },
 )

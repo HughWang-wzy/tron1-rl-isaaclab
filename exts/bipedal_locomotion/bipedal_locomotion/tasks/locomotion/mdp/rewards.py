@@ -400,6 +400,9 @@ class GaitReward(ManagerTermBase):
         command_name,
         sensor_cfg,
         asset_cfg,
+        swing_height_scale,
+        foot_radius,
+        max_swing_height,
     ) -> torch.Tensor:
         """Compute the reward.
 

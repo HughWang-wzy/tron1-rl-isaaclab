@@ -224,3 +224,19 @@ def gait_needed_score(
         gradient_threshold, step_edge_threshold, lateral_vel_threshold,
     )
     return score.unsqueeze(-1)
+
+
+def env_group_id(env: ManagerBasedRLEnv, num_groups: int = 2) -> torch.Tensor:
+    """Per-env expert group assignment for multi-expert distillation.
+
+    Divides environments into ``num_groups`` equal buckets by index:
+      envs 0 .. N//num_groups - 1          → group 0
+      envs N//num_groups .. 2*N//num_groups → group 1
+      ...
+
+    Returns a float tensor of shape ``(num_envs, 1)`` so it can be stored as
+    a standard observation. The ``MultiExpertDistillation`` algorithm decodes
+    it back to integer teacher ids via ``_decode_teacher_ids``.
+    """
+    ids = torch.arange(env.num_envs, device=env.device) * num_groups // env.num_envs
+    return ids.float().unsqueeze(-1)
