@@ -384,6 +384,9 @@ class GaitReward(ManagerTermBase):
         self.vel_sigma = cfg.params["gait_vel_sigma"]
         self.kappa_gait_probs = cfg.params["kappa_gait_probs"]
         self.command_name = cfg.params["command_name"]
+        self.swing_height_scale = float(cfg.params.get("swing_height_scale", 0.0))
+        self.foot_radius = float(cfg.params.get("foot_radius", 0.05))
+        self.max_swing_height = float(cfg.params.get("max_swing_height", 0.15))
         self.dt = env.step_dt
 
     def __call__(
@@ -422,8 +425,20 @@ class GaitReward(ManagerTermBase):
         foot_velocities = torch.norm(self.asset.data.body_lin_vel_w[:, self.asset_cfg.body_ids], dim=-1)
         velocity_reward = self._compute_velocity_reward(foot_velocities, desired_contact_states)
 
+        # Swing foot height reward: reward feet for lifting higher during swing phase
+        height_reward = torch.zeros_like(force_reward)
+        if self.swing_height_scale > 0.0:
+            foot_heights = torch.clamp(
+                self.asset.data.body_pos_w[:, self.asset_cfg.body_ids, 2] - self.foot_radius, min=0.0
+            )
+            clamped_heights = torch.clamp(foot_heights, max=self.max_swing_height)
+            # (1 - desired_contact) = swing phase weight
+            height_reward = self.swing_height_scale * torch.sum(
+                (1 - desired_contact_states) * clamped_heights, dim=1
+            )
+
         # Combine rewards
-        total_reward = force_reward + velocity_reward
+        total_reward = force_reward + velocity_reward + height_reward
         return total_reward
 
     def compute_contact_targets(self, gait_params):

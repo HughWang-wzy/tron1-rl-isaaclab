@@ -52,6 +52,9 @@ class WFGaitRewardsCfg(RewardsCfg):
             "command_name": "gait_command",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
+            "swing_height_scale": 1.0,
+            "foot_radius": 0.13,
+            "max_swing_height": 0.25,
         },
     )
 
@@ -276,8 +279,8 @@ class WFGaitRoughEnvCfg_PLAY(WFGaitRoughEnvCfg):
         self.events.push_robot = None
         self.events.add_base_mass = None
 
-        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.5, 0.5)
         self.curriculum = None
 
         # spawn randomly across terrain grid
