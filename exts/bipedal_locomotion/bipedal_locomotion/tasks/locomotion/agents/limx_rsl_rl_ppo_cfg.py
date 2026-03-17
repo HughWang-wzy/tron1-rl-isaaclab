@@ -278,8 +278,8 @@ class WF_TRON1AMoEPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 @configclass
 class WF_TRON1AGaitPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 15000
-    save_interval = 500
+    max_iterations = 20000
+    save_interval = 200
     experiment_name = "wf_tron_1a_gait"
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
