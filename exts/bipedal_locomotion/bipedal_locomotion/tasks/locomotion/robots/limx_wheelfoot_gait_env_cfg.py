@@ -32,7 +32,7 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- velocity tracking ----
     rew_lin_vel_xy = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=2.0,
+        func=mdp.track_lin_vel_xy_exp, weight=3.0,
         params={"command_name": "base_velocity", "std": 0.5},
     )
     rew_ang_vel_z = RewTerm(
@@ -42,7 +42,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     # ---- gait reward (force + velocity tracking for alternating contact) ----
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=2.0,
+        weight=2.5,
         params={
             "tracking_contacts_shaped_force": -2.0,
             "tracking_contacts_shaped_vel": -2.0,
