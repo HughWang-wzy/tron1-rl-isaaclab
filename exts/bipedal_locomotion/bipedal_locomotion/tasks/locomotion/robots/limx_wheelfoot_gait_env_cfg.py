@@ -44,17 +44,17 @@ class WFGaitRewardsCfg(RewardsCfg):
         func=mdp.GaitReward,
         weight=2.5,
         params={
-            "tracking_contacts_shaped_force": -2.0,
-            "tracking_contacts_shaped_vel": -2.0,
+            "tracking_contacts_shaped_force": -1.0,
+            "tracking_contacts_shaped_vel": -1.0,
             "gait_force_sigma": 25.0,
             "gait_vel_sigma": 0.25,
             "kappa_gait_probs": 0.05,
             "command_name": "gait_command",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
-            "swing_height_scale": 1.0,
+            "swing_height_scale": 2.0,
             "foot_radius": 0.13,
-            "max_swing_height": 0.25,
+            "max_swing_height": 0.35,
         },
     )
 
@@ -67,7 +67,7 @@ class WFGaitRewardsCfg(RewardsCfg):
         params={"command_name": "height_command", "sigma": 0.2},
     )
     pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
-    pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.03)
+    pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.01)
     pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.000008)
     pen_joint_accel = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     pen_joint_power_l1 = RewTerm(func=mdp.joint_powers_l1, weight=-2e-6)
@@ -78,7 +78,7 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- heavily penalise wheel velocity (force gait, not rolling) ----
     pen_joint_vel_wheel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-0.1,
+        func=mdp.joint_vel_l2, weight=-0.5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")},
     )
     pen_vel_non_wheel_l2 = RewTerm(
@@ -96,7 +96,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     )
     pen_feet_distance = RewTerm(
         func=mdp.feet_distance,
-        weight=-20,
+        weight=-100,
         params={"min_feet_distance": 0.32,
                 "max_feet_distance": 0.6,
                 "feet_links_name": ["wheel_[RL]_Link"]}
@@ -171,7 +171,7 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
                 frequencies=(1.5, 2.5),
                 offsets=(0.5, 0.5),
                 durations=(0.5, 0.5),
-                swing_height=(0.1, 0.2),
+                swing_height=(0.3, 0.3),
             ),
         )
 
@@ -254,22 +254,22 @@ class WFGaitRoughEnvCfg(WFGaitFlatEnvCfg):
         )
         self.scene.height_scanner.update_period = self.decimation * self.sim.dt
 
-        self.observations.policy.heights = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            noise=GaussianNoise(mean=0.0, std=0.01),
-            clip=(-100.0, 100.0),
-        )
-        self.observations.critic.heights = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            clip=(-100.0, 100.0),
-        )
-        self.observations.obsHistory.heights = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            clip=(-100.0, 100.0),
-        )
+        # self.observations.policy.heights = ObsTerm(
+        #     func=mdp.height_scan,
+        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+        #     noise=GaussianNoise(mean=0.0, std=0.01),
+        #     clip=(-100.0, 100.0),
+        # )
+        # self.observations.critic.heights = ObsTerm(
+        #     func=mdp.height_scan,
+        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+        #     clip=(-100.0, 100.0),
+        # )
+        # self.observations.obsHistory.heights = ObsTerm(
+        #     func=mdp.height_scan,
+        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+        #     clip=(-100.0, 100.0),
+        # )
 
         # ===================== rough terrain (no stairs) =====================
         self.scene.terrain.terrain_type = "generator"
