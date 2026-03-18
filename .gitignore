@@ -68,3 +68,4 @@ datasets
 play.sh
 train.sh
 experiment-record.md
+**/.ipynb_checkpoints/
