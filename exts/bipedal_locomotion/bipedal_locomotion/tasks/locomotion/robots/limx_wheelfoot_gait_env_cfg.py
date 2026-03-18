@@ -33,7 +33,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     # ---- velocity tracking ----
     rew_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp, weight=2.0,
-        params={"command_name": "base_velocity", "std": 0.7},
+        params={"command_name": "base_velocity", "std": 0.5},
     )
     rew_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp, weight=1.0,
@@ -59,7 +59,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     )
 
     # ---- standard penalties ----
-    pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.1)
+    pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
     pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.3)
     pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-10.0)
     track_base_height = RewTerm(
@@ -94,6 +94,13 @@ class WFGaitRewardsCfg(RewardsCfg):
             "threshold": 10.0,
         },
     )
+    pen_feet_distance = RewTerm(
+        func=mdp.feet_distance,
+        weight=-20,
+        params={"min_feet_distance": 0.32,
+                "max_feet_distance": 0.6,
+                "feet_links_name": ["wheel_[RL]_Link"]}
+    )
 
     # ---- explicitly disabled (overridden from base) ----
     jump_height: RewTerm | None = None
@@ -103,7 +110,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     jump_tuck: RewTerm | None = None
     track_base_height: RewTerm | None = None
     pen_base_contact: RewTerm | None = None
-    pen_feet_distance = None
+    # pen_feet_distance = None
     rew_leg_symmetry = None
     rew_same_foot_x_position = None
     pen_base_height: RewTerm | None = None
