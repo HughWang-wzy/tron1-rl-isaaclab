@@ -21,13 +21,12 @@ from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
 # Wheelfoot Gait Rewards
 ############################
 
-
 @configclass
 class WFGaitRewardsCfg(RewardsCfg):
     """Rewards for pure gait locomotion on the wheelfoot robot (no wheel usage)."""
 
     # ---- survival ----
-    keep_balance = RewTerm(func=mdp.stay_alive, weight=5.0)
+    keep_balance = RewTerm(func=mdp.stay_alive, weight=4.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-2.0)
 
     # ---- velocity tracking ----
@@ -42,7 +41,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     # ---- gait reward (force + velocity tracking for alternating contact) ----
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=2.5,
+        weight=2.0,
         params={
             "tracking_contacts_shaped_force": -1.0,
             "tracking_contacts_shaped_vel": -1.0,
@@ -54,7 +53,7 @@ class WFGaitRewardsCfg(RewardsCfg):
             "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
             "swing_height_scale": 2.0,
             "foot_radius": 0.13,
-            "max_swing_height": 0.35,
+            "max_swing_height": 0.3,
         },
     )
 
@@ -78,7 +77,7 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- heavily penalise wheel velocity (force gait, not rolling) ----
     pen_joint_vel_wheel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-0.5,
+        func=mdp.joint_vel_l2, weight=-0.2,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")},
     )
     pen_vel_non_wheel_l2 = RewTerm(
@@ -96,7 +95,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     )
     pen_feet_distance = RewTerm(
         func=mdp.feet_distance,
-        weight=-100,
+        weight=-20,
         params={"min_feet_distance": 0.32,
                 "max_feet_distance": 0.6,
                 "feet_links_name": ["wheel_[RL]_Link"]}
@@ -208,7 +207,7 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
             limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
                 lin_vel_x=(-1.0, 1.0),
                 lin_vel_y=(-0.5, 0.5),
-                ang_vel_z=(-math.pi, math.pi),
+                ang_vel_z=(-math.pi/2, math.pi/2),
                 heading=(-math.pi, math.pi),
             ),
         )
