@@ -211,12 +211,12 @@ DOWN_STAIRS_TERRAINS_CFG = TerrainGeneratorCfg(
     use_cache=True,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(proportion=0.4),
-        "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+        "pyramid_stairs_inv": MeshPyramidStairsTerrainCfg(
             proportion=0.2,
             step_height_range=(0.05, 0.20),
             step_width=0.3,
             platform_width=3.0,
-            border_width=5.0,
+            border_width=20.0,
             holes=False,
         ),
         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
@@ -247,7 +247,7 @@ DOWN_STAIRS_TERRAINS_PLAY_CFG = TerrainGeneratorCfg(
             step_height_range=(0.05, 0.20),
             step_width=0.3,
             platform_width=3.0,
-            border_width=5.0,
+            border_width=20.0,
             holes=False,
         ),
         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
