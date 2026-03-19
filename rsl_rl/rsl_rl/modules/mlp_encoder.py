@@ -87,7 +87,7 @@ class MLP_Encoder(nn.Module):
         print(f"Encoder MLP: {self.encoder}")
 
         # disable args validation for speedup
-        Normal.set_default_validate_args = False
+        Normal.set_default_validate_args(False)
 
     def forward(self, input):
         return self.encoder(input)

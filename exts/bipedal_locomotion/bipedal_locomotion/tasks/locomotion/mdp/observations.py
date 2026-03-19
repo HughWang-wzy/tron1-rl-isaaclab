@@ -166,6 +166,12 @@ def generated_commands(env: ManagerBasedRLEnv, command_name: str) -> torch.Tenso
     """The generated command from command term in the command manager with the given name."""
     return env.command_manager.get_command(command_name)
 
+
+def command_component(env: ManagerBasedRLEnv, command_name: str, index: int) -> torch.Tensor:
+    """Single command component as shape (num_envs, 1)."""
+    command = env.command_manager.get_command(command_name)
+    return command[:, index : index + 1]
+
 def joint_pos_rel_exclude_wheel(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
                                 wheel_joints_name: list[str] = ["wheel_[RL]_Joint"] 
                                 ) -> torch.Tensor:

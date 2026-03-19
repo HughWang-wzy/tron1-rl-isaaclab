@@ -3,6 +3,8 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import copy
+import re
 import sys
 
 from isaaclab.app import AppLauncher
@@ -19,8 +21,17 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--max_iterations", type=int, default=None, help="Maximum number of iterations to train.")
 parser.add_argument("--save_interval", type=int, default=None, help="The number of iterations between saves")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument(
+    "--agent", type=str, default=None, help="Name of the RL agent configuration entry point."
+)
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--checkpoint_path", type=str, default=None, help="Relative path to checkpoint file.")
+parser.add_argument(
+    "--teacher_checkpoint",
+    type=str,
+    default=None,
+    help="Teacher checkpoint path for single-expert distillation (overrides resume path resolution).",
+)
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -46,8 +57,15 @@ import os
 import torch
 from datetime import datetime
 
-# from rsl_rl.runners import OnPolicyRunner
-from rsl_rl.runner import OnPolicyRunner, MoEOnPolicyRunner
+import bipedal_locomotion  # noqa: F401  # ensure custom gym tasks are registered
+
+from rsl_rl.runner import (
+    DistillationRunner,
+    MoEOnPolicyRunner,
+    MultiExpertDistillationRunner,
+    OnPolicyRunner,
+)
+from rsl_rl.utils import resolve_callable
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -61,37 +79,114 @@ from isaaclab.utils.io import dump_yaml
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 
-# Import extensions to set up environment tasks
-from bipedal_locomotion.utils.wrappers.rsl_rl import RslRlPpoAlgorithmMlpCfg
-
-
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
+
+def _cfg_set(cfg: dict | object, key: str, value):
+    if isinstance(cfg, dict):
+        cfg[key] = value
+    else:
+        setattr(cfg, key, value)
+
+
+def _cfg_to_dict(cfg: dict | object) -> dict:
+    if isinstance(cfg, dict):
+        return copy.deepcopy(cfg)
+    if hasattr(cfg, "to_dict"):
+        return cfg.to_dict()
+    raise TypeError(f"Unsupported config type: {type(cfg)}")
+
+
+def _task_has_entry_point(task_name: str, entry_point_key: str) -> bool:
+    spec = gym.spec(task_name.split(":")[-1])
+    return spec.kwargs.get(entry_point_key) is not None
+
+
+def _resolve_task_name(task_name: str) -> str:
+    """Resolve task id, allowing shorthand ids without explicit version suffix."""
+    task_id = task_name.split(":")[-1]
+    task_prefix = task_name.rsplit(":", 1)[0] if ":" in task_name else None
+
+    try:
+        gym.spec(task_id)
+        return task_name
+    except Exception:
+        pass
+
+    # Try auto-completing version, e.g. "Foo-Bar" -> "Foo-Bar-v0"
+    if re.search(r"-v\d+$", task_id) is None:
+        candidates: list[tuple[int, str]] = []
+        for env_id in gym.registry.keys():
+            if env_id.startswith(f"{task_id}-v"):
+                match = re.search(r"-v(\d+)$", env_id)
+                if match is not None:
+                    candidates.append((int(match.group(1)), env_id))
+        if len(candidates) > 0:
+            candidates.sort(key=lambda x: x[0])
+            resolved_id = candidates[-1][1]
+            if task_prefix is not None:
+                return f"{task_prefix}:{resolved_id}"
+            return resolved_id
+
+    available = sorted(
+        env_id for env_id in gym.registry.keys() if task_id in env_id or env_id.startswith("Isaac-Limx-WF")
+    )
+    preview = ", ".join(available[:8])
+    raise gym.error.NameNotFound(
+        f"Environment `{task_id}` doesn't exist. "
+        f"If you meant the multi-expert task, use `Isaac-Limx-WF-MultiExpert-Flat-v0`. "
+        f"Closest registered ids: {preview}"
+    )
+
+
 # @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main():
     """Train with RSL-RL agent."""
+    original_task = args_cli.task
+    args_cli.task = _resolve_task_name(args_cli.task)
+    if args_cli.task != original_task:
+        print(f"[INFO] Resolved task '{original_task}' -> '{args_cli.task}'")
+
+    # select agent cfg entry point
+    if args_cli.agent is not None:
+        agent_entry_key = args_cli.agent
+    else:
+        has_distill_entry = _task_has_entry_point(args_cli.task, "rsl_rl_distillation_cfg_entry_point")
+        if has_distill_entry and (args_cli.teacher_checkpoint is not None or "MultiExpert" in args_cli.task):
+            agent_entry_key = "rsl_rl_distillation_cfg_entry_point"
+        else:
+            agent_entry_key = "rsl_rl_cfg_entry_point"
+
+    print(f"[INFO] Using agent cfg entry point: {agent_entry_key}")
+
     # parse configuration
     env_cfg: ManagerBasedRLEnvCfg = parse_env_cfg(
         task_name=args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs
     )
-    agent_cfg: RslRlPpoAlgorithmMlpCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    agent_cfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli, entry_point_key=agent_entry_key)
 
     if args_cli.max_iterations is not None:
-        agent_cfg.max_iterations = args_cli.max_iterations
+        _cfg_set(agent_cfg, "max_iterations", args_cli.max_iterations)
     if args_cli.save_interval is not None:
-        agent_cfg.save_interval = args_cli.save_interval
+        _cfg_set(agent_cfg, "save_interval", args_cli.save_interval)
+
+    agent_cfg_dict = _cfg_to_dict(agent_cfg)
+    algorithm_cfg = agent_cfg_dict.get("algorithm", {})
+    algorithm_class_name = algorithm_cfg.get("class_name") if isinstance(algorithm_cfg, dict) else None
 
     # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    experiment_name = agent_cfg_dict.get("experiment_name", "default_experiment")
+    log_root_path = os.path.join("logs", "rsl_rl", experiment_name)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs: {time-stamp}_{run_name}
     log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    if agent_cfg.run_name:
-        log_dir += f"_{agent_cfg.run_name}"
+    run_name = agent_cfg_dict.get("run_name")
+    if run_name:
+        log_dir += f"_{run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
 
     # create isaac environment
@@ -116,27 +211,49 @@ def main():
     env = RslRlVecEnvWrapper(env)
 
     # create runner from rsl-rl
-    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
-    runner_cls = {"OnPolicyRunner": OnPolicyRunner, "MoEOnPolicyRunner": MoEOnPolicyRunner}.get(
-        runner_class_name, OnPolicyRunner
-    )
-    runner = runner_cls(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner_class_name = agent_cfg_dict.get("class_name")
+    if runner_class_name is None:
+        if algorithm_class_name == "Distillation":
+            runner_class_name = "DistillationRunner"
+        elif algorithm_class_name == "MultiExpertDistillation":
+            runner_class_name = "MultiExpertDistillationRunner"
+        elif algorithm_class_name == "MoEPPO":
+            runner_class_name = "MoEOnPolicyRunner"
+        else:
+            runner_class_name = "OnPolicyRunner"
 
-    # write git state to logs
-    # runner.add_git_repo_to_log(__file__)
+    runner_cls_map = {
+        "OnPolicyRunner": OnPolicyRunner,
+        "MoEOnPolicyRunner": MoEOnPolicyRunner,
+        "DistillationRunner": DistillationRunner,
+        "MultiExpertDistillationRunner": MultiExpertDistillationRunner,
+    }
+    runner_cls = runner_cls_map.get(runner_class_name)
+    if runner_cls is None:
+        runner_cls = resolve_callable(runner_class_name)
+
+    runner_device = agent_cfg_dict.get("device", args_cli.device if args_cli.device is not None else "cpu")
+    runner = runner_cls(env, agent_cfg_dict, log_dir=log_dir, device=runner_device)
+
     # save resume path before creating a new log_dir
-    if agent_cfg.resume:
-        # get path to previous checkpoint
-        if args_cli.checkpoint_path is not None:
+    should_load = bool(agent_cfg_dict.get("resume", False)) or algorithm_class_name == "Distillation"
+    if should_load:
+        if args_cli.teacher_checkpoint is not None:
+            resume_path = args_cli.teacher_checkpoint
+        elif args_cli.checkpoint_path is not None:
             resume_path = args_cli.checkpoint_path
         else:
-            resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+            resume_path = get_checkpoint_path(
+                log_root_path,
+                agent_cfg_dict.get("load_run", ".*"),
+                agent_cfg_dict.get("load_checkpoint", ".*"),
+            )
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        # load previously trained model
         runner.load(resume_path)
 
     # set seed of the environment
-    env.seed(agent_cfg.seed)
+    if agent_cfg_dict.get("seed", None) is not None:
+        env.seed(agent_cfg_dict["seed"])
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
@@ -144,7 +261,7 @@ def main():
 
 
     # run training
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    runner.learn(num_learning_iterations=agent_cfg_dict["max_iterations"], init_at_random_ep_len=True)
 
     # close the simulator
     env.close()

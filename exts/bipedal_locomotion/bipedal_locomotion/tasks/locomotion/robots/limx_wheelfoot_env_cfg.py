@@ -429,7 +429,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         # -- jump command
         self.commands.base_jump = mdp.JumpCommandCfg(
             jump_probability=0.3,
-            standing_height_range=(0.6, 0.9),
+            standing_height_range=(0.7, 0.9),
             jump_delta_range=(0.25, 0.5),
             jump_margin=0.5,
             resampling_time_range=(3.0, 10.0),

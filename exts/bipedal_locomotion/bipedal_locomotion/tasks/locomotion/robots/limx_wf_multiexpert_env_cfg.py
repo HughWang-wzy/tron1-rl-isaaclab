@@ -10,7 +10,7 @@ Environment split (static, by index):
 Observation groups
 ------------------
 policy
-    Student input (~22 dims, no privileged info).
+    Student proprioceptive input (concatenated in policy group).
 env_group
     Per-env expert id. Shape (N, 1), float. 0 = jump, 1 = gait.
     Consumed by MultiExpertDistillation via ``teacher_id_obs_group``.
@@ -18,11 +18,11 @@ critic
     Combined privileged obs for both teachers (contains jump + gait specific
     fields so either teacher can find its slice).
 commands
-    Shared base velocity command.
+    Shared command group from WFJumpFlatEnvCfg: velocity + jump command.
 jump_commands
     Jump command only — feed to jump teacher JIT.
 gait_commands
-    Gait command + height command — feed to gait teacher JIT.
+    Gait command + standing_height(from base_jump) — feed to gait teacher JIT.
 obsHistory_flat
     Flattened proprioceptive history, shape (N, 10 * policy_obs_dim).
     Use as encoder input when teacher JIT wraps encoder + actor.
@@ -30,12 +30,12 @@ obsHistory_flat
 Configuring teacher JIT obs_groups (in WF_MultiExpertDistillationCfg)
 ----------------------------------------------------------------------
 If teachers were exported as  encoder + actor  combined JITs:
-    jump_expert.obs_groups = ["obsHistory_flat", "policy", "commands", "jump_commands"]
+    jump_expert.obs_groups = ["obsHistory_flat", "policy", "commands"]
     gait_expert.obs_groups = ["obsHistory_flat", "policy", "commands", "gait_commands"]
 
-If teachers are plain MLPs taking policy + privileged obs:
-    jump_expert.obs_groups = ["policy", "critic"]
-    gait_expert.obs_groups = ["policy", "critic"]
+If teachers are actor-only JITs exported from on-policy training:
+    jump_expert.obs_groups = ["policy", "commands", "jump_commands"]
+    gait_expert.obs_groups = ["policy", "commands", "gait_commands"]
 """
 
 import math
@@ -105,7 +105,7 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
 
     Inherits the Jump setup (jump commands, jump rewards, action_scale=0.5,
     no height scanner) and adds:
-      - Gait commands (gait_command, height_command) for group-1 envs.
+      - Gait command (gait_command) for group-1 envs.
       - ``env_group`` obs (static 0/1 split by env index).
       - ``jump_commands`` / ``gait_commands`` separate obs groups.
       - ``obsHistory_flat`` for encoder-based teacher JITs.
@@ -124,12 +124,6 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
                 durations=(0.5, 0.5),
                 swing_height=(0.1, 0.2),
             ),
-        )
-        self.commands.height_command = mdp.HeightCommandCfg(
-            resampling_time_range=(10.0, 10.0),
-            debug_vis=False,
-            min_height=0.70,
-            max_height=0.90,
         )
 
         # ===================== env_group obs =====================
@@ -156,19 +150,8 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             params={"command_name": "gait_command"},
         )
         self.observations.gait_commands.height_command = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "height_command"},
-        )
-
-        # ===================== extra critic obs (for gait teacher) =====================
-        # Gait-teacher needs gait_command + height_command in privileged obs.
-        self.observations.critic.gait_command = ObsTerm(
-            func=mdp.get_gait_command,
-            params={"command_name": "gait_command"},
-        )
-        self.observations.critic.height_command = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "height_command"},
+            func=mdp.command_component,
+            params={"command_name": "base_jump", "index": 2},
         )
 
         # ===================== obsHistory_flat =====================

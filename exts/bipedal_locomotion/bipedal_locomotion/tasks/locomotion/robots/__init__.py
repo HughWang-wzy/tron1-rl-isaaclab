@@ -150,6 +150,9 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFJumpFlatEnvCfg,
         "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,
+        "rsl_rl_distillation_cfg_entry_point": (
+            "bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_distillation_cfg:WF_JumpDistillationCfg"
+        ),
     },
 )
 
@@ -160,6 +163,9 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wheelfoot_env_cfg.WFJumpFlatEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,
+        "rsl_rl_distillation_cfg_entry_point": (
+            "bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_distillation_cfg:WF_JumpDistillationCfg"
+        ),
     },
 )
 
@@ -265,6 +271,9 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wf_multiexpert_env_cfg.WFMultiExpertFlatEnvCfg,
         "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,  # placeholder; distillation uses its own runner
+        "rsl_rl_distillation_cfg_entry_point": (
+            "bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_distillation_cfg:WF_MultiExpertDistillationCfg"
+        ),
     },
 )
 
@@ -275,5 +284,8 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wf_multiexpert_env_cfg.WFMultiExpertFlatEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_wf_jump_runner_cfg,  # placeholder; distillation uses its own runner
+        "rsl_rl_distillation_cfg_entry_point": (
+            "bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_distillation_cfg:WF_MultiExpertDistillationCfg"
+        ),
     },
 )

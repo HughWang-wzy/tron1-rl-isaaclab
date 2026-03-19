@@ -86,7 +86,7 @@ class MoEActorCritic(nn.Module):
         # ---- Action noise ----
         self.logstd = nn.Parameter(torch.zeros(num_actions))
         self.distribution = None
-        Normal.set_default_validate_args = False
+        Normal.set_default_validate_args(False)
 
         # ---- Stored for aux loss ----
         self.gate_probs = None
