@@ -1,43 +1,5 @@
 """Multi-expert distillation student environment: Jump + Gait.
 
-``WFMultiExpertFlatEnvCfg`` merges the Jump and Gait environments into a
-single student environment for multi-expert distillation training.
-
-Environment split (static, by index):
-  envs  0 .. N//2 - 1  →  group 0  (Jump expert)
-  envs  N//2 .. N - 1  →  group 1  (Gait expert)
-
-Observation groups
-------------------
-policy
-    Student proprioceptive input (concatenated in policy group).
-env_group
-    Per-env expert id. Shape (N, 1), float. 0 = jump, 1 = gait.
-    Consumed by MultiExpertDistillation via ``teacher_id_obs_group``.
-critic
-    Combined privileged obs for both teachers (contains jump + gait specific
-    fields so either teacher can find its slice).
-commands
-    Group-conditioned velocity command with separated sampling:
-    jump envs use jump velocity, gait envs use gait velocity.
-jump_commands
-    Jump command only (zero for gait envs) — feed to jump teacher JIT.
-gait_commands
-    Gait command + standing_height(from base_jump), zero for jump envs —
-    feed to gait teacher JIT.
-obsHistory_flat
-    Flattened proprioceptive history, shape (N, 10 * policy_obs_dim).
-    Use as encoder input when teacher JIT wraps encoder + actor.
-
-Configuring teacher JIT obs_groups (in WF_MultiExpertDistillationCfg)
-----------------------------------------------------------------------
-If teachers were exported as  encoder + actor  combined JITs:
-    jump_expert.obs_groups = ["obsHistory_flat", "policy", "commands"]
-    gait_expert.obs_groups = ["obsHistory_flat", "policy", "commands", "gait_commands"]
-
-If teachers are actor-only JITs exported from on-policy training:
-    jump_expert.obs_groups = ["policy", "commands", "jump_commands"]
-    gait_expert.obs_groups = ["policy", "commands", "gait_commands"]
 """
 
 import math
@@ -109,15 +71,6 @@ class _HistoryObsFlatCfg(ObsGroup):
 @configclass
 class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
     """Student environment for Jump + Gait multi-expert distillation.
-
-    Inherits the Jump setup (jump commands, jump rewards, action_scale=0.5,
-    no height scanner) and adds:
-      - Separated jump/gait velocity command samplers.
-      - Gait command for group-1 envs.
-      - Gait height condition reusing ``base_jump[:, 2]`` (standing_height).
-      - ``env_group`` obs (static 0/1 split by env index).
-      - ``jump_commands`` / ``gait_commands`` separate obs groups.
-      - ``obsHistory_flat`` for encoder-based teacher JITs.
     """
 
     def __post_init__(self):
