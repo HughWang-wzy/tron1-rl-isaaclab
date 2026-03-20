@@ -172,6 +172,41 @@ def command_component(env: ManagerBasedRLEnv, command_name: str, index: int) -> 
     command = env.command_manager.get_command(command_name)
     return command[:, index : index + 1]
 
+
+def expert_separated_commands(
+    env: ManagerBasedRLEnv,
+    jump_velocity_command_name: str,
+    gait_velocity_command_name: str,
+    jump_command_name: str,
+    num_groups: int = 2,
+) -> torch.Tensor:
+    """Per-env command vector with expert-specific sampling sources.
+
+    Output shape: (num_envs, 6), matching teacher ``commands`` layout:
+      [velocity(3), aux(3)].
+
+    Group mapping:
+      - group 0 (jump expert): [jump_velocity, jump_command]
+      - group 1 (gait expert): [gait_velocity, zeros_like(jump_command)]
+    """
+    if num_groups != 2:
+        raise ValueError(f"expert_separated_commands currently supports num_groups=2 only, got {num_groups}.")
+
+    group_ids = torch.arange(env.num_envs, device=env.device) * num_groups // env.num_envs
+    jump_velocity = env.command_manager.get_command(jump_velocity_command_name)
+    gait_velocity = env.command_manager.get_command(gait_velocity_command_name)
+    jump_command = env.command_manager.get_command(jump_command_name)
+
+    if jump_velocity.shape != gait_velocity.shape:
+        raise ValueError(
+            "Jump and gait velocity command shapes must match, got "
+            f"{tuple(jump_velocity.shape)} vs {tuple(gait_velocity.shape)}."
+        )
+
+    jump_commands = torch.cat((jump_velocity, jump_command), dim=-1)
+    gait_commands = torch.cat((gait_velocity, torch.zeros_like(jump_command)), dim=-1)
+    return torch.where(group_ids.unsqueeze(-1) == 0, jump_commands, gait_commands)
+
 def joint_pos_rel_exclude_wheel(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
                                 wheel_joints_name: list[str] = ["wheel_[RL]_Joint"] 
                                 ) -> torch.Tensor:

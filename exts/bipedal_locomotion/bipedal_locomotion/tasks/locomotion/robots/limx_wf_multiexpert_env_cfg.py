@@ -18,7 +18,8 @@ critic
     Combined privileged obs for both teachers (contains jump + gait specific
     fields so either teacher can find its slice).
 commands
-    Shared command group from WFJumpFlatEnvCfg: velocity + jump command.
+    Group-conditioned command group with separated sampling:
+    jump envs use jump velocity + jump command, gait envs use gait velocity.
 jump_commands
     Jump command only — feed to jump teacher JIT.
 gait_commands
@@ -48,6 +49,11 @@ from isaaclab.managers import SceneEntityCfg
 from bipedal_locomotion.tasks.locomotion import mdp
 from bipedal_locomotion.tasks.locomotion.robots.limx_wheelfoot_env_cfg import WFJumpFlatEnvCfg
 from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import ObservarionsCfg
+
+_BASE_JUMP_STANDING_HEIGHT_INDEX = 2
+_JUMP_VELOCITY_COMMAND_NAME = "base_velocity_jump"
+_GAIT_VELOCITY_COMMAND_NAME = "base_velocity_gait"
+_JUMP_COMMAND_NAME = "base_jump"
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +111,9 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
 
     Inherits the Jump setup (jump commands, jump rewards, action_scale=0.5,
     no height scanner) and adds:
-      - Gait command (gait_command) for group-1 envs.
+      - Separated jump/gait velocity command samplers.
+      - Gait command for group-1 envs.
+      - Gait height condition reusing ``base_jump[:, 2]`` (standing_height).
       - ``env_group`` obs (static 0/1 split by env index).
       - ``jump_commands`` / ``gait_commands`` separate obs groups.
       - ``obsHistory_flat`` for encoder-based teacher JITs.
@@ -113,6 +121,53 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()   # full Jump flat env setup
+
+        # Disable all curriculum terms for multi-expert distillation runs.
+        self.curriculum = None
+        self.rewards = None
+        # ===================== separated velocity commands =====================
+        self.commands.base_velocity_jump = mdp.UniformLevelVelocityCommandCfg(
+            asset_name="robot",
+            heading_command=True,
+            heading_control_stiffness=1.0,
+            rel_standing_envs=0.02,
+            rel_heading_envs=1.0,
+            debug_vis=False,
+            resampling_time_range=(10.0, 10.0),
+            ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-1.0, 1.0),
+                lin_vel_y=(-0.0, 0.0),
+                ang_vel_z=(-0.5, 0.5),
+                heading=(-math.pi, math.pi),
+            ),
+            limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-4.0, 4.0),
+                lin_vel_y=(-0.0, 0.0),
+                ang_vel_z=(-math.pi, math.pi),
+                heading=(-math.pi, math.pi),
+            ),
+        )
+        self.commands.base_velocity_gait = mdp.UniformLevelVelocityCommandCfg(
+            asset_name="robot",
+            heading_command=True,
+            heading_control_stiffness=1.0,
+            rel_standing_envs=0.02,
+            rel_heading_envs=1.0,
+            debug_vis=False,
+            resampling_time_range=(10.0, 10.0),
+            ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-0.5, 0.5),
+                lin_vel_y=(-0.3, 0.3),
+                ang_vel_z=(-0.5, 0.5),
+                heading=(-math.pi, math.pi),
+            ),
+            limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-1.0, 1.0),
+                lin_vel_y=(-0.5, 0.5),
+                ang_vel_z=(-math.pi / 2, math.pi / 2),
+                heading=(-math.pi, math.pi),
+            ),
+        )
 
         # ===================== gait commands =====================
         self.commands.gait_command = mdp.UniformGaitCommandCfg(
@@ -134,6 +189,20 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             params={"num_groups": 2},
         )
 
+        # ===================== commands obs group =====================
+        # Keep teacher ``commands`` input dim=6 while sampling jump/gait velocity
+        # commands from separate command terms by env-group.
+        self.observations.commands = ObservarionsCfg.ExpertTargetCfg()
+        self.observations.commands.expert_commands = ObsTerm(
+            func=mdp.expert_separated_commands,
+            params={
+                "jump_velocity_command_name": _JUMP_VELOCITY_COMMAND_NAME,
+                "gait_velocity_command_name": _GAIT_VELOCITY_COMMAND_NAME,
+                "jump_command_name": _JUMP_COMMAND_NAME,
+                "num_groups": 2,
+            },
+        )
+
         # ===================== jump_commands obs group =====================
         # Feed to the jump teacher JIT together with policy + commands.
         self.observations.jump_commands = ObservarionsCfg.ExpertTargetCfg()
@@ -149,9 +218,11 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             func=mdp.get_gait_command,
             params={"command_name": "gait_command"},
         )
+        # Keep gait height conditioned on jump command's standing_height so
+        # both experts share one height source in the merged environment.
         self.observations.gait_commands.height_command = ObsTerm(
             func=mdp.command_component,
-            params={"command_name": "base_jump", "index": 2},
+            params={"command_name": "base_jump", "index": _BASE_JUMP_STANDING_HEIGHT_INDEX},
         )
 
         # ===================== obsHistory_flat =====================
@@ -174,3 +245,7 @@ class WFMultiExpertFlatEnvCfg_PLAY(WFMultiExpertFlatEnvCfg):
 
         self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity_jump.ranges.lin_vel_x = (-1.0, 1.0)
+        self.commands.base_velocity_jump.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity_gait.ranges.lin_vel_x = (-1.0, 1.0)
+        self.commands.base_velocity_gait.ranges.lin_vel_y = (-0.5, 0.5)

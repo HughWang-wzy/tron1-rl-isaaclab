@@ -52,54 +52,13 @@ class JITTeacherWrapper(nn.Module):
 
 
 class MultiExpertDistillation:
-    """Distillation algorithm for training one student against multiple expert teachers.
-
-    Each environment is assigned to one expert via an observation group (``teacher_id_obs_group``).
-    The student learns to imitate the assigned expert through behavior cloning.
-
-    Teachers are loaded from JIT (TorchScript) checkpoints at construction time via
-    :meth:`construct_algorithm`. The student is an :class:`~rsl_rl.modules.MLPModel`.
-
-    Example config structure::
-
-        cfg = {
-            "student": {
-                "class_name": "rsl_rl.modules.MLPModel",
-                "hidden_dims": [512, 256, 128],
-                "obs_normalization": False,
-                "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 1.0},
-            },
-            "algorithm": {
-                "class_name": "MultiExpertDistillation",
-                "num_learning_epochs": 1,
-                "gradient_length": 15,
-                "learning_rate": 1e-3,
-                "loss_type": "mse",
-            },
-            "obs_groups": {
-                "student": ["policy"],  # student obs set
-            },
-            "experts": [
-                {
-                    "name": "flat_expert",
-                    "obs_groups": ["policy", "critic"],
-                    "jit_policy_path": "/path/to/flat_expert.pt",
-                },
-                {
-                    "name": "stairs_expert",
-                    "obs_groups": ["policy", "critic"],
-                    "jit_policy_path": "/path/to/stairs_expert.pt",
-                },
-            ],
-            "teacher_id_obs_group": "env_group",  # obs key that indicates expert id per env
-            "num_steps_per_env": 24,
-            "multi_gpu": None,
-        }
-    """
+    """Distillation algorithm for training one student against multiple expert teachers."""
 
     student: MLPModel
     teachers: nn.ModuleList
+    expert_action_scales: torch.Tensor
     teacher_loaded: bool = False
+    num_actions: int
 
     def __init__(
         self,
@@ -109,6 +68,7 @@ class MultiExpertDistillation:
         env: VecEnv,
         expert_names: list[str],
         teacher_id_obs_group: str = "env_group",
+        expert_action_scales: list[float | list[float]] | None = None,
         num_learning_epochs: int = 1,
         gradient_length: int = 15,
         learning_rate: float = 1e-3,
@@ -125,6 +85,7 @@ class MultiExpertDistillation:
         self.teacher_id_obs_group = teacher_id_obs_group
         self.expert_names = expert_names
         self.is_multi_gpu = multi_gpu_cfg is not None
+        self.num_actions = int(env.num_actions)
 
         if len(teachers) == 0:
             raise ValueError("MultiExpertDistillation requires at least one teacher.")
@@ -132,6 +93,13 @@ class MultiExpertDistillation:
             raise ValueError("Number of teacher models must match number of expert names.")
         if len(set(expert_names)) != len(expert_names):
             raise ValueError(f"Expert names must be unique. Received: {expert_names}")
+        if expert_action_scales is None:
+            expert_action_scales = [1.0] * len(teachers)
+        if len(expert_action_scales) != len(teachers):
+            raise ValueError(
+                "Number of expert action scales must match number of teachers. "
+                f"Got {len(expert_action_scales)} vs {len(teachers)}."
+            )
 
         if multi_gpu_cfg is not None:
             self.gpu_global_rank = multi_gpu_cfg["global_rank"]
@@ -142,6 +110,7 @@ class MultiExpertDistillation:
 
         self.student = student.to(self.device)
         self.teachers = nn.ModuleList([teacher.to(self.device) for teacher in teachers])
+        self.expert_action_scales = self._build_expert_action_scale_tensor(expert_action_scales)
         self.optimizer = resolve_optimizer(optimizer)(self.student.parameters(), lr=learning_rate)
 
         self.storage = storage
@@ -163,6 +132,88 @@ class MultiExpertDistillation:
 
         self.num_updates = 0
         self.teacher_loaded = True
+
+    def _build_expert_action_scale_tensor(self, expert_action_scales: list[float | list[float]]) -> torch.Tensor:
+        """Normalize scalar/vector per-expert action scales into shape [num_experts, num_actions]."""
+        scale_rows: list[torch.Tensor] = []
+        for expert_name, scale_cfg in zip(self.expert_names, expert_action_scales, strict=True):
+            if isinstance(scale_cfg, (int, float)):
+                scale_value = float(scale_cfg)
+                if scale_value <= 0.0:
+                    raise ValueError(
+                        f"Expert '{expert_name}' action_scale must be > 0, got {scale_value}."
+                    )
+                scale_rows.append(torch.full((self.num_actions,), scale_value, dtype=torch.float32))
+                continue
+
+            if not isinstance(scale_cfg, (list, tuple)):
+                raise TypeError(
+                    f"Expert '{expert_name}' action_scale must be a float or list/tuple of floats, "
+                    f"got {type(scale_cfg).__name__}."
+                )
+            if len(scale_cfg) != self.num_actions:
+                raise ValueError(
+                    f"Expert '{expert_name}' action_scale vector must have length {self.num_actions}, "
+                    f"got {len(scale_cfg)}."
+                )
+
+            scale_tensor = torch.tensor(scale_cfg, dtype=torch.float32)
+            if torch.any(scale_tensor <= 0.0):
+                raise ValueError(
+                    f"Expert '{expert_name}' action_scale vector must contain only positive values, "
+                    f"got {scale_tensor.tolist()}."
+                )
+            scale_rows.append(scale_tensor)
+
+        return torch.stack(scale_rows, dim=0).to(device=self.device)
+
+    @staticmethod
+    def _resolve_obs_group_dims(obs: TensorDict, obs_groups: list[str]) -> tuple[int, dict[str, int]]:
+        """Return total dim and per-group dims for a list of observation groups."""
+        group_dims: dict[str, int] = {}
+        total_dim = 0
+        for obs_group in obs_groups:
+            if obs_group not in obs:
+                raise ValueError(
+                    f"Observation group '{obs_group}' not found in env observations. "
+                    f"Available groups: {list(obs.keys())}"
+                )
+            if obs[obs_group].ndim != 2:
+                raise ValueError(
+                    f"Observation group '{obs_group}' must be 2D [num_envs, dim], "
+                    f"got shape {tuple(obs[obs_group].shape)}."
+                )
+            obs_dim = int(obs[obs_group].shape[-1])
+            group_dims[obs_group] = obs_dim
+            total_dim += obs_dim
+        return total_dim, group_dims
+
+    @staticmethod
+    def _read_positive_int_attr(module: torch.jit.ScriptModule, attr_name: str) -> int | None:
+        """Read a positive integer attribute from a TorchScript module if available."""
+        if not hasattr(module, attr_name):
+            return None
+        try:
+            value = int(getattr(module, attr_name))
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    @classmethod
+    def _infer_jit_input_layout(cls, jit_model: torch.jit.ScriptModule) -> dict[str, int]:
+        """Infer known input layout dimensions from exported teacher attributes."""
+        layout: dict[str, int] = {}
+        for attr_name in (
+            "obs_history_dim",
+            "policy_dim",
+            "commands_dim",
+            "gait_commands_dim",
+            "jump_commands_dim",
+        ):
+            attr_value = cls._read_positive_int_attr(jit_model, attr_name)
+            if attr_value is not None:
+                layout[attr_name] = attr_value
+        return layout
 
     def _decode_teacher_ids(self, teacher_id_obs: torch.Tensor) -> torch.Tensor:
         teacher_id_obs = teacher_id_obs.to(device=self.device)
@@ -200,7 +251,9 @@ class MultiExpertDistillation:
         """Sample student actions and gather expert actions for the current env grouping."""
         teacher_ids = self._resolve_teacher_ids(obs)
 
-        self.transition.actions = self.student(obs, stochastic_output=True).detach()
+        # Distillation rollout should stay close to teacher-supporting states.
+        # Use deterministic student output (distribution mean) for environment actions.
+        self.transition.actions = self.student(obs, stochastic_output=False).detach()
         self.transition.privileged_actions = torch.zeros_like(self.transition.actions)
         self.transition.observations = obs
 
@@ -208,7 +261,9 @@ class MultiExpertDistillation:
             env_ids = torch.nonzero(teacher_ids == teacher_id, as_tuple=False).squeeze(-1)
             if env_ids.numel() == 0:
                 continue
-            self.transition.privileged_actions[env_ids] = teacher(obs[env_ids]).detach()
+            teacher_actions = teacher(obs[env_ids]).detach()
+            scale = self.expert_action_scales[teacher_id].unsqueeze(0)
+            self.transition.privileged_actions[env_ids] = teacher_actions * scale
 
         return self.transition.actions
 
@@ -308,6 +363,7 @@ class MultiExpertDistillation:
             "student_state_dict": self.student.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "expert_names": self.expert_names,
+            "expert_action_scales": self.expert_action_scales.detach().cpu().tolist(),
         }
 
     def load(self, loaded_dict: dict, load_cfg: dict | None, strict: bool) -> bool:
@@ -369,17 +425,47 @@ class MultiExpertDistillation:
         env: VecEnv,
         expert_cfg: dict,
         device: str,
-    ) -> tuple[str, nn.Module]:
+    ) -> tuple[str, nn.Module, float | list[float]]:
         expert_name = expert_cfg["name"]
         obs_groups = expand_obs_groups(list(expert_cfg["obs_groups"]))
         cls._validate_expert_obs_groups(obs, expert_name, obs_groups)
+        raw_scale = expert_cfg.get("action_scale", 1.0)
+        if isinstance(raw_scale, (int, float)):
+            action_scale: float | list[float] = float(raw_scale)
+        elif isinstance(raw_scale, (list, tuple)):
+            action_scale = [float(value) for value in raw_scale]
+        else:
+            raise TypeError(
+                f"Expert '{expert_name}' action_scale must be a float or list/tuple of floats, "
+                f"got {type(raw_scale).__name__}."
+            )
 
         jit_policy_path = expert_cfg["jit_policy_path"]
         jit_model = torch.jit.load(jit_policy_path, map_location=device)
         jit_model.eval()
+
+        input_dim, input_group_dims = cls._resolve_obs_group_dims(obs, obs_groups)
+        jit_input_layout = cls._infer_jit_input_layout(jit_model)
+        if jit_input_layout:
+            expected_input_dim = sum(jit_input_layout.values())
+            if input_dim != expected_input_dim:
+                raise ValueError(
+                    f"Expert '{expert_name}' input dim mismatch: configured obs_groups={obs_groups} "
+                    f"produce dim={input_dim} with per-group dims={input_group_dims}, "
+                    f"but teacher JIT expects dim={expected_input_dim} with layout={jit_input_layout}."
+                )
+
         teacher = JITTeacherWrapper(jit_model, obs_groups)
-        print(f"Teacher [{expert_name}]: loaded from JIT {jit_policy_path}")
-        return expert_name, teacher
+        if isinstance(action_scale, float):
+            scale_msg = f"{action_scale:.4f}"
+        else:
+            scale_msg = f"vector(len={len(action_scale)})"
+        print(
+            f"Teacher [{expert_name}]: loaded from JIT {jit_policy_path} "
+            f"(action_scale={scale_msg}, input_dim={input_dim}, group_dims={input_group_dims}, "
+            f"jit_layout={jit_input_layout if jit_input_layout else 'unknown'})"
+        )
+        return expert_name, teacher, action_scale
 
     @staticmethod
     def construct_algorithm(
@@ -410,10 +496,12 @@ class MultiExpertDistillation:
 
         expert_names: list[str] = []
         teachers: list[nn.Module] = []
+        expert_action_scales: list[float | list[float]] = []
         for expert_cfg in cfg["experts"]:
-            expert_name, teacher = alg_class._build_teacher(obs, env, expert_cfg, device)
+            expert_name, teacher, action_scale = alg_class._build_teacher(obs, env, expert_cfg, device)
             expert_names.append(expert_name)
             teachers.append(teacher)
+            expert_action_scales.append(action_scale)
 
         storage = RolloutStorage(
             "distillation", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device
@@ -424,6 +512,7 @@ class MultiExpertDistillation:
             storage=storage,
             env=env,
             expert_names=expert_names,
+            expert_action_scales=expert_action_scales,
             teacher_id_obs_group=cfg.get("teacher_id_obs_group", "env_group"),
             device=device,
             multi_gpu_cfg=cfg.get("multi_gpu"),

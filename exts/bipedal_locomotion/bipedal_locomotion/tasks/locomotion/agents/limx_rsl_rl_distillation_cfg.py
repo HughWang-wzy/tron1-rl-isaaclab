@@ -64,7 +64,9 @@ WF_MultiExpertDistillationCfg: dict = {
         # 高斯分布输出: 均值由网络给出, 标准差可学习
         "distribution_cfg": {
             "class_name": "GaussianDistribution",
-            "init_std": 1.0,
+            # Distillation does not rely on exploration; smaller initial std
+            # avoids random early rollouts collapsing into frequent falls.
+            "init_std": 0.1,
         },
     },
     # ---- 多专家蒸馏算法 ----
@@ -94,6 +96,8 @@ WF_MultiExpertDistillationCfg: dict = {
             # policy_all 内部执行: encoder(obsHistory_flat) -> concat -> actor
             "obs_groups": ["obsHistory_flat", "policy", "commands"],
             "jit_policy_path": _JUMP_JIT_PATH,
+            # jump teacher 本身就是在 joint_pos.scale=0.5 环境训练的，无需缩放
+            "action_scale": 1.0,
         },
         {
             "name": "gait_expert",
@@ -101,12 +105,12 @@ WF_MultiExpertDistillationCfg: dict = {
             # policy_all 内部将 commands[:3] 与 gait_commands 合成为 gait actor 所需 commands
             "obs_groups": ["obsHistory_flat", "policy", "commands", "gait_commands"],
             "jit_policy_path": _GAIT_JIT_PATH,
+            # 按动作维度缩放:
+            #   - 前 6 维是 joint_pos: 0.25 -> 0.5, 乘 0.5
+            #   - 后 2 维是 joint_vel: 保持 1.0，不缩放
+            "action_scale": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0],
         },
     ],
-    # ---- 路由观测组 ----
-    #   该 obs 组须在学生环境中存在，用于决定每个 env 跟随哪位专家:
-    #     标量整数: shape (num_envs,)  或  (num_envs, 1)
-    #     one-hot : shape (num_envs, num_experts)
     "teacher_id_obs_group": "env_group",
     # ---- 训练超参数 ----
     "num_steps_per_env": 24,

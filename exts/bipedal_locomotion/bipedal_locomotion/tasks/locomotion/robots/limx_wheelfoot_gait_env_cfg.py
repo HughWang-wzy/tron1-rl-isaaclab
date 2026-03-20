@@ -252,24 +252,6 @@ class WFGaitRoughEnvCfg(WFGaitFlatEnvCfg):
             mesh_prim_paths=["/World/ground"],
         )
         self.scene.height_scanner.update_period = self.decimation * self.sim.dt
-
-        # self.observations.policy.heights = ObsTerm(
-        #     func=mdp.height_scan,
-        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-        #     noise=GaussianNoise(mean=0.0, std=0.01),
-        #     clip=(-100.0, 100.0),
-        # )
-        # self.observations.critic.heights = ObsTerm(
-        #     func=mdp.height_scan,
-        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-        #     clip=(-100.0, 100.0),
-        # )
-        # self.observations.obsHistory.heights = ObsTerm(
-        #     func=mdp.height_scan,
-        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-        #     clip=(-100.0, 100.0),
-        # )
-
         # ===================== rough terrain (no stairs) =====================
         self.scene.terrain.terrain_type = "generator"
         self.scene.terrain.terrain_generator = BLIND_ROUGH_TERRAINS_CFG

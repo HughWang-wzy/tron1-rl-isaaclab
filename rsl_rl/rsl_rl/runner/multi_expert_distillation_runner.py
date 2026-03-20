@@ -18,56 +18,6 @@ from rsl_rl.algorithm import MultiExpertDistillation
 
 
 class MultiExpertDistillationRunner:
-    """Runner for multi-expert distillation: one student trained against N frozen JIT teachers.
-
-    Each environment is routed to one expert based on an observation group
-    (``teacher_id_obs_group``). The student learns via behavior cloning.
-
-    Teachers are loaded from JIT (TorchScript) checkpoints at construction time.
-    The student is an :class:`~rsl_rl.modules.MLPModel`.
-
-    Expected train_cfg structure::
-
-        train_cfg = {
-            "student": {
-                "class_name": "rsl_rl.modules.MLPModel",
-                "hidden_dims": [512, 256, 128],
-                "obs_normalization": False,
-                "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 1.0},
-            },
-            "algorithm": {
-                "class_name": "MultiExpertDistillation",
-                "num_learning_epochs": 1,
-                "gradient_length": 15,
-                "learning_rate": 1e-3,
-                "loss_type": "mse",
-            },
-            "obs_groups": {
-                "student": ["policy"],
-            },
-            "experts": [
-                {
-                    "name": "flat_expert",
-                    "obs_groups": ["policy", "critic"],
-                    "jit_policy_path": "/path/to/flat_expert.pt",
-                },
-                {
-                    "name": "stairs_expert",
-                    "obs_groups": ["policy", "critic"],
-                    "jit_policy_path": "/path/to/stairs_expert.pt",
-                },
-            ],
-            "teacher_id_obs_group": "env_group",
-            "num_steps_per_env": 24,
-            "save_interval": 100,
-        }
-
-    Usage::
-
-        runner = MultiExpertDistillationRunner(env, train_cfg, log_dir, device)
-        runner.learn(num_learning_iterations)
-    """
-
     def __init__(self, env, train_cfg: dict, log_dir: str | None = None, device: str = "cpu") -> None:
         self.cfg = train_cfg
         self.device = device
