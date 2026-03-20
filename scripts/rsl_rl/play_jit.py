@@ -2,6 +2,21 @@
 
 This script is intended for validating exported JIT models (for example
 ``policy_all.pt``) without loading an RSL-RL runner checkpoint.
+
+
+python scripts/rsl_rl/play_jit.py \
+  --task Isaac-Limx-WF-Jump-Rough-Play-v0 \
+  --jit_policy_path /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_jump/2026-03-17_23-42-13-rough/exported/policy_all.pt \
+  --num_envs 32
+  
+python scripts/rsl_rl/play_jit.py \
+  --task Isaac-Limx-WF-Gait-Flat-Play-v0 \ 
+  --jit_policy_path /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt \      
+  --obs_groups obsHistory,policy,commands \
+  --num_envs 16 \
+  --device cuda:0 \
+  --max_steps 10000 \
+  --print_every 200
 """
 
 from __future__ import annotations

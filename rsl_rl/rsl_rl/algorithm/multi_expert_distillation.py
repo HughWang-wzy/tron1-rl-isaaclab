@@ -36,8 +36,20 @@ class JITTeacherWrapper(nn.Module):
         self.jit_model = jit_model
         self._obs_groups = obs_groups
 
+    @staticmethod
+    def _obs_group_tensor(obs: TensorDict, group_name: str) -> torch.Tensor:
+        """Fetch one observation group and flatten history-style [N, H, D] tensors."""
+        tensor = obs[group_name]
+        if tensor.ndim == 3:
+            return tensor.flatten(start_dim=1)
+        if tensor.ndim == 2:
+            return tensor
+        raise ValueError(
+            f"Observation group '{group_name}' for JIT teacher must be 2D/3D, got shape {tuple(tensor.shape)}."
+        )
+
     def forward(self, obs: TensorDict, **kwargs) -> torch.Tensor:
-        latent = torch.cat([obs[g] for g in self._obs_groups], dim=-1)
+        latent = torch.cat([self._obs_group_tensor(obs, g) for g in self._obs_groups], dim=-1)
         return self.jit_model(latent)
 
     def reset(self, dones: torch.Tensor | None = None, **kwargs) -> None:
@@ -75,6 +87,7 @@ class MultiExpertDistillation:
         max_grad_norm: float | None = None,
         loss_type: str = "mse",
         optimizer: str = "adam",
+        rollout_action_source: str = "student",
         device: str = "cpu",
         multi_gpu_cfg: dict | None = None,
         **kwargs,
@@ -86,6 +99,7 @@ class MultiExpertDistillation:
         self.expert_names = expert_names
         self.is_multi_gpu = multi_gpu_cfg is not None
         self.num_actions = int(env.num_actions)
+        self.rollout_action_source = rollout_action_source
 
         if len(teachers) == 0:
             raise ValueError("MultiExpertDistillation requires at least one teacher.")
@@ -99,6 +113,11 @@ class MultiExpertDistillation:
             raise ValueError(
                 "Number of expert action scales must match number of teachers. "
                 f"Got {len(expert_action_scales)} vs {len(teachers)}."
+            )
+        if self.rollout_action_source not in ("student", "teacher"):
+            raise ValueError(
+                "rollout_action_source must be either 'student' or 'teacher', "
+                f"got '{self.rollout_action_source}'."
             )
 
         if multi_gpu_cfg is not None:
@@ -178,12 +197,16 @@ class MultiExpertDistillation:
                     f"Observation group '{obs_group}' not found in env observations. "
                     f"Available groups: {list(obs.keys())}"
                 )
-            if obs[obs_group].ndim != 2:
+            obs_tensor = obs[obs_group]
+            if obs_tensor.ndim == 2:
+                obs_dim = int(obs_tensor.shape[-1])
+            elif obs_tensor.ndim == 3:
+                obs_dim = int(obs_tensor.shape[1] * obs_tensor.shape[2])
+            else:
                 raise ValueError(
-                    f"Observation group '{obs_group}' must be 2D [num_envs, dim], "
-                    f"got shape {tuple(obs[obs_group].shape)}."
+                    f"Observation group '{obs_group}' must be 2D/3D for JIT teachers, "
+                    f"got shape {tuple(obs_tensor.shape)}."
                 )
-            obs_dim = int(obs[obs_group].shape[-1])
             group_dims[obs_group] = obs_dim
             total_dim += obs_dim
         return total_dim, group_dims
@@ -193,9 +216,14 @@ class MultiExpertDistillation:
         """Read a positive integer attribute from a TorchScript module if available."""
         if not hasattr(module, attr_name):
             return None
-        try:
-            value = int(getattr(module, attr_name))
-        except (TypeError, ValueError):
+        raw_value = getattr(module, attr_name)
+        if isinstance(raw_value, torch.Tensor):
+            if raw_value.numel() != 1:
+                return None
+            value = int(raw_value.item())
+        elif isinstance(raw_value, (int, float)):
+            value = int(raw_value)
+        else:
             return None
         return value if value > 0 else None
 
@@ -215,6 +243,27 @@ class MultiExpertDistillation:
                 layout[attr_name] = attr_value
         return layout
 
+    @classmethod
+    def _infer_expected_input_dim(
+        cls, jit_model: torch.jit.ScriptModule, jit_input_layout: dict[str, int]
+    ) -> int | None:
+        """Infer expected teacher input dim from explicit or complete JIT metadata."""
+        for attr_name in ("input_dim", "obs_dim", "input_size"):
+            value = cls._read_positive_int_attr(jit_model, attr_name)
+            if value is not None:
+                return value
+
+        if len(jit_input_layout) == 0:
+            return None
+
+        # Some exports only contain obs_history_dim even when true model input
+        # includes additional tails (e.g. policy/commands). Treat as partial metadata.
+        if jit_input_layout.keys() == {"obs_history_dim"}:
+            return None
+
+        expected_input_dim = sum(jit_input_layout.values())
+        return expected_input_dim if expected_input_dim > 0 else None
+
     def _decode_teacher_ids(self, teacher_id_obs: torch.Tensor) -> torch.Tensor:
         teacher_id_obs = teacher_id_obs.to(device=self.device)
         if teacher_id_obs.ndim == 1:
@@ -226,6 +275,10 @@ class MultiExpertDistillation:
         return teacher_ids.view(-1)
 
     def _resolve_teacher_ids(self, obs: TensorDict) -> torch.Tensor:
+        # Single-expert debug mode: route every env to teacher-0, regardless of env_group encoding.
+        if len(self.teachers) == 1:
+            return torch.zeros(self.env.num_envs, dtype=torch.long, device=self.device)
+
         if self.teacher_id_obs_group not in obs:
             raise KeyError(
                 f"Observation group '{self.teacher_id_obs_group}' is required for teacher routing. "
@@ -253,8 +306,8 @@ class MultiExpertDistillation:
 
         # Distillation rollout should stay close to teacher-supporting states.
         # Use deterministic student output (distribution mean) for environment actions.
-        self.transition.actions = self.student(obs, stochastic_output=False).detach()
-        self.transition.privileged_actions = torch.zeros_like(self.transition.actions)
+        student_actions = self.student(obs, stochastic_output=False).detach()
+        teacher_actions_all = torch.zeros_like(student_actions)
         self.transition.observations = obs
 
         for teacher_id, teacher in enumerate(self.teachers):
@@ -263,7 +316,13 @@ class MultiExpertDistillation:
                 continue
             teacher_actions = teacher(obs[env_ids]).detach()
             scale = self.expert_action_scales[teacher_id].unsqueeze(0)
-            self.transition.privileged_actions[env_ids] = teacher_actions * scale
+            teacher_actions_all[env_ids] = teacher_actions * scale
+
+        self.transition.privileged_actions = teacher_actions_all
+        if self.rollout_action_source == "teacher":
+            self.transition.actions = teacher_actions_all
+        else:
+            self.transition.actions = student_actions
 
         return self.transition.actions
 
@@ -311,7 +370,10 @@ class MultiExpertDistillation:
                         f"Observation group '{self.teacher_id_obs_group}' required for per-expert metrics. "
                         f"Available groups: {list(batch.observations.keys())}"
                     )
-                teacher_ids = self._decode_teacher_ids(batch.observations[self.teacher_id_obs_group])
+                if len(self.teachers) == 1:
+                    teacher_ids = torch.zeros(per_env_loss.shape[0], dtype=torch.long, device=self.device)
+                else:
+                    teacher_ids = self._decode_teacher_ids(batch.observations[self.teacher_id_obs_group])
                 for teacher_id, expert_name in enumerate(self.expert_names):
                     mask = teacher_ids == teacher_id
                     if torch.any(mask):
@@ -446,14 +508,13 @@ class MultiExpertDistillation:
 
         input_dim, input_group_dims = cls._resolve_obs_group_dims(obs, obs_groups)
         jit_input_layout = cls._infer_jit_input_layout(jit_model)
-        if jit_input_layout:
-            expected_input_dim = sum(jit_input_layout.values())
-            if input_dim != expected_input_dim:
-                raise ValueError(
-                    f"Expert '{expert_name}' input dim mismatch: configured obs_groups={obs_groups} "
-                    f"produce dim={input_dim} with per-group dims={input_group_dims}, "
-                    f"but teacher JIT expects dim={expected_input_dim} with layout={jit_input_layout}."
-                )
+        expected_input_dim = cls._infer_expected_input_dim(jit_model, jit_input_layout)
+        if expected_input_dim is not None and input_dim != expected_input_dim:
+            raise ValueError(
+                f"Expert '{expert_name}' input dim mismatch: configured obs_groups={obs_groups} "
+                f"produce dim={input_dim} with per-group dims={input_group_dims}, "
+                f"but teacher JIT expects dim={expected_input_dim} with layout={jit_input_layout}."
+            )
 
         teacher = JITTeacherWrapper(jit_model, obs_groups)
         if isinstance(action_scale, float):

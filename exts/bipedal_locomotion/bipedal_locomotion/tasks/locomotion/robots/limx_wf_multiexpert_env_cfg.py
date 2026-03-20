@@ -18,12 +18,13 @@ critic
     Combined privileged obs for both teachers (contains jump + gait specific
     fields so either teacher can find its slice).
 commands
-    Group-conditioned command group with separated sampling:
-    jump envs use jump velocity + jump command, gait envs use gait velocity.
+    Group-conditioned velocity command with separated sampling:
+    jump envs use jump velocity, gait envs use gait velocity.
 jump_commands
-    Jump command only — feed to jump teacher JIT.
+    Jump command only (zero for gait envs) — feed to jump teacher JIT.
 gait_commands
-    Gait command + standing_height(from base_jump) — feed to gait teacher JIT.
+    Gait command + standing_height(from base_jump), zero for jump envs —
+    feed to gait teacher JIT.
 obsHistory_flat
     Flattened proprioceptive history, shape (N, 10 * policy_obs_dim).
     Use as encoder input when teacher JIT wraps encoder + actor.
@@ -125,6 +126,9 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         # Disable all curriculum terms for multi-expert distillation runs.
         self.curriculum = None
         self.rewards = None
+        self.commands.base_jump.assist_force_max = 0.0
+        self.events.push_robot = None
+        self.events.add_base_mass = None
         # ===================== separated velocity commands =====================
         self.commands.base_velocity_jump = mdp.UniformLevelVelocityCommandCfg(
             asset_name="robot",
@@ -190,39 +194,39 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         )
 
         # ===================== commands obs group =====================
-        # Keep teacher ``commands`` input dim=6 while sampling jump/gait velocity
-        # commands from separate command terms by env-group.
+        # Keep shared ``commands`` as velocity-only dim=3 while sampling jump/gait
+        # velocity commands from separate command terms by env-group.
         self.observations.commands = ObservarionsCfg.ExpertTargetCfg()
         self.observations.commands.expert_commands = ObsTerm(
             func=mdp.expert_separated_commands,
             params={
                 "jump_velocity_command_name": _JUMP_VELOCITY_COMMAND_NAME,
                 "gait_velocity_command_name": _GAIT_VELOCITY_COMMAND_NAME,
-                "jump_command_name": _JUMP_COMMAND_NAME,
                 "num_groups": 2,
             },
         )
 
         # ===================== jump_commands obs group =====================
         # Feed to the jump teacher JIT together with policy + commands.
+        # Non-jump group envs are zeroed out.
         self.observations.jump_commands = ObservarionsCfg.ExpertTargetCfg()
         self.observations.jump_commands.jump_command = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "base_jump"},
+            func=mdp.expert_separated_jump_commands,
+            params={"jump_command_name": _JUMP_COMMAND_NAME, "num_groups": 2},
         )
 
         # ===================== gait_commands obs group =====================
         # Feed to the gait teacher JIT together with policy + commands.
+        # Non-gait group envs are zeroed out.
         self.observations.gait_commands = ObservarionsCfg.ExpertTargetCfg()
-        self.observations.gait_commands.gait_command = ObsTerm(
-            func=mdp.get_gait_command,
-            params={"command_name": "gait_command"},
-        )
-        # Keep gait height conditioned on jump command's standing_height so
-        # both experts share one height source in the merged environment.
-        self.observations.gait_commands.height_command = ObsTerm(
-            func=mdp.command_component,
-            params={"command_name": "base_jump", "index": _BASE_JUMP_STANDING_HEIGHT_INDEX},
+        self.observations.gait_commands.gait_with_height = ObsTerm(
+            func=mdp.expert_separated_gait_commands,
+            params={
+                "gait_command_name": "gait_command",
+                "height_command_name": _JUMP_COMMAND_NAME,
+                "height_index": _BASE_JUMP_STANDING_HEIGHT_INDEX,
+                "num_groups": 2,
+            },
         )
 
         # ===================== obsHistory_flat =====================

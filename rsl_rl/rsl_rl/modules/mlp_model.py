@@ -26,6 +26,18 @@ class MLPModel(nn.Module):
 
     is_recurrent: bool = False
 
+    @staticmethod
+    def _obs_group_tensor(obs: TensorDict, obs_group: str) -> torch.Tensor:
+        """Fetch one observation group and flatten history-style [N, H, D] tensors."""
+        tensor = obs[obs_group]
+        if tensor.ndim == 3:
+            return tensor.flatten(start_dim=1)
+        if tensor.ndim == 2:
+            return tensor
+        raise ValueError(
+            f"MLPModel supports 2D/3D observations only, got shape {tuple(tensor.shape)} for '{obs_group}'."
+        )
+
     def __init__(
         self,
         obs: TensorDict,
@@ -121,10 +133,10 @@ class MLPModel(nn.Module):
         self, obs: TensorDict, masks: torch.Tensor | None = None, hidden_state: HiddenState = None
     ) -> torch.Tensor:
         del masks, hidden_state
-        obs_list = [obs[obs_group] for obs_group in self.policy_obs_groups]
+        obs_list = [self._obs_group_tensor(obs, obs_group) for obs_group in self.policy_obs_groups]
         latent = torch.cat(obs_list, dim=-1)
         if self.encoder is not None:
-            encoder_obs_list = [obs[obs_group] for obs_group in self.encoder_obs_groups]
+            encoder_obs_list = [self._obs_group_tensor(obs, obs_group) for obs_group in self.encoder_obs_groups]
             encoder_obs = torch.cat(encoder_obs_list, dim=-1)
             encoder_out = self.encoder.encode(encoder_obs)
             latent = torch.cat((encoder_out, latent), dim=-1)
@@ -151,11 +163,15 @@ class MLPModel(nn.Module):
     def _sum_obs_dim(self, obs: TensorDict, active_obs_groups: list[str]) -> int:
         obs_dim = 0
         for obs_group in active_obs_groups:
-            if len(obs[obs_group].shape) != 2:
+            obs_tensor = obs[obs_group]
+            if obs_tensor.ndim == 2:
+                obs_dim += int(obs_tensor.shape[-1])
+            elif obs_tensor.ndim == 3:
+                obs_dim += int(obs_tensor.shape[1] * obs_tensor.shape[2])
+            else:
                 raise ValueError(
-                    f"MLPModel only supports 1D observations, got shape {obs[obs_group].shape} for '{obs_group}'."
+                    f"MLPModel supports 2D/3D observations only, got shape {tuple(obs_tensor.shape)} for '{obs_group}'."
                 )
-            obs_dim += obs[obs_group].shape[-1]
         return obs_dim
 
     def _get_latent_dim(self) -> int:

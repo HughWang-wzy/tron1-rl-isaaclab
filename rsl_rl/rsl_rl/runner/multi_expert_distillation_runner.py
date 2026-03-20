@@ -93,6 +93,7 @@ class MultiExpertDistillationRunner:
                 for _ in range(self.num_steps_per_env):
                     actions = self.alg.act(obs)
                     obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
+                    # print(f"obs: {obs}")
                     obs = obs.to(self.device)
                     rewards = rewards.to(self.device)
                     dones = dones.to(self.device)

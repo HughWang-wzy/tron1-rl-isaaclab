@@ -50,7 +50,7 @@ WF_MultiExpertDistillationCfg: dict = {
         "hidden_dims": [512, 256, 128],
         "activation": "elu",
         "obs_normalization": False,
-        # 复用 PPO 的 EncoderCfg 风格：student 先编码 obsHistory_flat，再与其余 obs 拼接进 policy MLP
+        # 复用 PPO 的 EncoderCfg 风格：student 先编码 obsHistory，再与其余 obs 拼接进 policy MLP
         "encoder_cfg": {
             "class_name": "rsl_rl.modules:MLP_Encoder",
             "output_detach": False,
@@ -59,7 +59,7 @@ WF_MultiExpertDistillationCfg: dict = {
             "activation": "elu",
             "orthogonal_init": False,
         },
-        "encoder_obs_groups": ["obsHistory_flat"],
+        "encoder_obs_groups": ["obsHistory"],
         "remove_encoder_obs_from_policy": True,
         # 高斯分布输出: 均值由网络给出, 标准差可学习
         "distribution_cfg": {
@@ -78,11 +78,14 @@ WF_MultiExpertDistillationCfg: dict = {
         "loss_type": "mse",         # 或 "huber"
         "max_grad_norm": 1.0,
         "optimizer": "adam",
+        # Rollout in the environment with teacher actions to keep trajectories
+        # inside expert-supporting regions during early distillation.
+        "rollout_action_source": "teacher",
     },
     # ---- 学生观测组 ----
     "obs_groups": {
         # 学生需要命令条件 + 历史信息，否则在多任务目标下会学成“平均动作”
-        "student": ["obsHistory_flat", "policy", "commands", "gait_commands", "env_group"],
+        "student": ["obsHistory", "policy", "commands", "jump_commands", "gait_commands", "env_group"],
     },
     # ---- 专家列表 ----
     #   每位专家:
@@ -92,18 +95,18 @@ WF_MultiExpertDistillationCfg: dict = {
     "experts": [
         {
             "name": "jump_expert",
-            # x = [obsHistory_flat, policy, commands]
-            # policy_all 内部执行: encoder(obsHistory_flat) -> concat -> actor
-            "obs_groups": ["obsHistory_flat", "policy", "commands"],
+            # x = [obsHistory(flattened at runtime), policy, commands(vel), jump_commands]
+            # 使用 obsHistory(3D) + 运行时 flatten，与 PPO 训练/导出路径保持一致。
+            "obs_groups": ["obsHistory", "policy", "commands", "jump_commands"],
             "jit_policy_path": _JUMP_JIT_PATH,
             # jump teacher 本身就是在 joint_pos.scale=0.5 环境训练的，无需缩放
             "action_scale": 1.0,
         },
         {
             "name": "gait_expert",
-            # x = [obsHistory_flat, policy, commands, gait_commands]
+            # x = [obsHistory(flattened at runtime), policy, commands(vel), gait_commands]
             # policy_all 内部将 commands[:3] 与 gait_commands 合成为 gait actor 所需 commands
-            "obs_groups": ["obsHistory_flat", "policy", "commands", "gait_commands"],
+            "obs_groups": ["obsHistory", "policy", "commands", "gait_commands"],
             "jit_policy_path": _GAIT_JIT_PATH,
             # 按动作维度缩放:
             #   - 前 6 维是 joint_pos: 0.25 -> 0.5, 乘 0.5
