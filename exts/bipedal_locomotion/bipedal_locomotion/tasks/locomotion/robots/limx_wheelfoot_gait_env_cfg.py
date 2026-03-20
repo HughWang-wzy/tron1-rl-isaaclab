@@ -170,7 +170,7 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
                 frequencies=(1.5, 2.5),
                 offsets=(0.5, 0.5),
                 durations=(0.5, 0.5),
-                swing_height=(0.3, 0.3),
+                swing_height=(0.1, 0.2),
             ),
         )
 
@@ -223,8 +223,8 @@ class WFGaitFlatEnvCfg_PLAY(WFGaitFlatEnvCfg):
         self.events.push_robot = None
         self.events.add_base_mass = None
 
-        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
         self.curriculum = None
 
 

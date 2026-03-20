@@ -300,6 +300,40 @@ class MultiExpertDistillation:
         losses = self.loss_fn(actions, targets, reduction="none")
         return losses.view(losses.shape[0], -1).mean(dim=1)
 
+    def _prepare_teacher_obs(self, teacher_id: int, obs_subset: TensorDict) -> TensorDict:
+        """Optionally compensate teacher-only observation fields for expert action scaling.
+
+        When rollout actions are scaled before entering the environment, the subsequent
+        `last_action` observations are also scaled. Teachers were trained with their native
+        action space, so we invert per-dimension action scaling on `last_action` slices
+        for teacher inference only.
+        """
+        scale = self.expert_action_scales[teacher_id]
+        if torch.allclose(scale, torch.ones_like(scale)):
+            return obs_subset
+
+        inv_scale = (1.0 / scale).to(device=obs_subset.device)
+        teacher_obs = obs_subset.clone()
+
+        def _rescale_last_action(tensor: torch.Tensor) -> torch.Tensor:
+            # policy: [N, ... , last_action(num_actions)] with last_action as the tail block
+            if tensor.ndim == 2 and tensor.shape[-1] >= self.num_actions:
+                out = tensor.clone()
+                out[..., -self.num_actions :] = out[..., -self.num_actions :] * inv_scale
+                return out
+            # obsHistory: [N, H, D], last_action is the tail block in each history frame
+            if tensor.ndim == 3 and tensor.shape[-1] >= self.num_actions:
+                out = tensor.clone()
+                out[..., -self.num_actions :] = out[..., -self.num_actions :] * inv_scale
+                return out
+            return tensor
+
+        for group_name in ("policy", "obsHistory", "obsHistory_flat"):
+            if group_name in teacher_obs.keys():
+                teacher_obs.set(group_name, _rescale_last_action(teacher_obs[group_name]))
+
+        return teacher_obs
+
     def act(self, obs: TensorDict) -> torch.Tensor:
         """Sample student actions and gather expert actions for the current env grouping."""
         teacher_ids = self._resolve_teacher_ids(obs)
@@ -314,7 +348,8 @@ class MultiExpertDistillation:
             env_ids = torch.nonzero(teacher_ids == teacher_id, as_tuple=False).squeeze(-1)
             if env_ids.numel() == 0:
                 continue
-            teacher_actions = teacher(obs[env_ids]).detach()
+            teacher_obs = self._prepare_teacher_obs(teacher_id, obs[env_ids])
+            teacher_actions = teacher(teacher_obs).detach()
             scale = self.expert_action_scales[teacher_id].unsqueeze(0)
             teacher_actions_all[env_ids] = teacher_actions * scale
 
