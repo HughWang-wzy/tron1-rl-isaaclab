@@ -8,7 +8,10 @@
       "Bash(python3 -c \"from isaaclab.utils import configclass; from dataclasses import asdict; help\\(asdict\\)\")",
       "Read(//home/hugh/IsaacLab/source/isaaclab/**)",
       "Read(//home/hugh/IsaacLab/source/isaaclab_tasks/**)",
-      "Read(//home/hugh/**)"
+      "Read(//home/hugh/**)",
+      "Bash(find /home/hugh/tron1-rl-isaaclab -path */isaaclab* -name *.py)",
+      "Bash(python3 -c \"import isaaclab; print\\(isaaclab.__file__\\)\")",
+      "Bash(python3 -c \"import omni.isaac.lab; print\\(omni.isaac.lab.__file__\\)\")"
     ]
   }
 }
