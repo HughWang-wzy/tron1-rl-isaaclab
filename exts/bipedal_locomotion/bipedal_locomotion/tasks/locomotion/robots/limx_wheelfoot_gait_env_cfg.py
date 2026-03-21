@@ -1,20 +1,339 @@
 import math
+from dataclasses import MISSING
 
-from isaaclab.utils import configclass
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sim import DomeLightCfg, MdlFileCfg, RigidBodyMaterialCfg
+from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveGaussianNoiseCfg as GaussianNoise
-from isaaclab.sensors import RayCasterCfg, patterns
 
+from bipedal_locomotion.assets.config.wheelfoot_cfg import WHEELFOOT_CFG
 from bipedal_locomotion.tasks.locomotion import mdp
-from bipedal_locomotion.tasks.locomotion.robots.limx_wheelfoot_env_cfg import WFBaseEnvCfg
-from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import RewardsCfg
-from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
-    BLIND_ROUGH_TERRAINS_CFG,
-    BLIND_ROUGH_TERRAINS_PLAY_CFG,
-)
+from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import BLIND_ROUGH_TERRAINS_CFG, BLIND_ROUGH_TERRAINS_PLAY_CFG
+
+
+##################
+# Scene Definition
+##################
+
+
+@configclass
+class WFGaitSceneCfg(InteractiveSceneCfg):
+    """Configuration for the gait scene."""
+
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        terrain_generator=None,
+        max_init_terrain_level=0,
+        collision_group=-1,
+        physics_material=RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=1.0,
+        ),
+        visual_material=MdlFileCfg(
+            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/"
+            + "TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+            project_uvw=True,
+            texture_scale=(0.25, 0.25),
+        ),
+        debug_vis=False,
+    )
+
+    light = AssetBaseCfg(
+        prim_path="/World/skyLight",
+        spawn=DomeLightCfg(
+            intensity=750.0,
+            color=(0.9, 0.9, 0.9),
+            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+        ),
+    )
+
+    robot: ArticulationCfg = MISSING
+    height_scanner: RayCasterCfg = MISSING
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=4, track_air_time=True, update_period=0.0
+    )
+
+
+##############
+# MDP settings
+##############
+
+
+@configclass
+class WFGaitCommandsCfg:
+    """Command terms for the gait MDP."""
+
+    base_velocity = mdp.UniformVelocityCommandCfg(
+        asset_name="robot",
+        heading_command=True,
+        heading_control_stiffness=1.0,
+        rel_standing_envs=0.02,
+        rel_heading_envs=1.0,
+        debug_vis=True,
+        resampling_time_range=(3.0, 15.0),
+        ranges=mdp.UniformVelocityCommandCfg.Ranges(
+            lin_vel_x=(-0.7, 0.7), lin_vel_y=(-0.5, 0.5), ang_vel_z=(-math.pi, math.pi), heading=(-math.pi, math.pi)
+        ),
+    )
+    base_jump: mdp.JumpCommandCfg | None = None
+    height_command: mdp.HeightCommandCfg | None = None
+    gait_command: mdp.UniformGaitCommandCfg | None = None
+
+
+@configclass
+class WFGaitActionsCfg:
+    """Action specifications for the gait MDP."""
+
+    joint_pos = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["abad_L_Joint", "abad_R_Joint", "hip_L_Joint", "hip_R_Joint", "knee_L_Joint", "knee_R_Joint"],
+        scale=0.25,
+        use_default_offset=True,
+    )
+
+    joint_vel = mdp.JointVelocityActionCfg(
+        asset_name="robot",
+        joint_names=["wheel_L_Joint", "wheel_R_Joint"],
+        scale=1.0,
+    )
+
+
+@configclass
+class WFGaitObservarionsCfg:
+    """Observation specifications for the gait MDP."""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        base_ang_vel = ObsTerm(
+            func=mdp.base_ang_vel, noise=GaussianNoise(mean=0.0, std=0.05), clip=(-100.0, 100.0), scale=0.25
+        )
+        proj_gravity = ObsTerm(
+            func=mdp.projected_gravity, noise=GaussianNoise(mean=0.0, std=0.025), clip=(-100.0, 100.0), scale=1.0
+        )
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel_exclude_wheel,
+            params={"wheel_joints_name": ["wheel_[RL]_Joint"]},
+            noise=GaussianNoise(mean=0.0, std=0.01),
+        )
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel, noise=GaussianNoise(mean=0.0, std=0.01), clip=(-100.0, 100.0), scale=0.05
+        )
+        last_action = ObsTerm(
+            func=mdp.last_action, noise=GaussianNoise(mean=0.0, std=0.01), clip=(-100.0, 100.0), scale=1.0
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    @configclass
+    class HistoryObsCfg(ObsGroup):
+        base_ang_vel = ObsTerm(
+            func=mdp.base_ang_vel, noise=GaussianNoise(mean=0.0, std=0.05), clip=(-100.0, 100.0), scale=0.25
+        )
+        proj_gravity = ObsTerm(
+            func=mdp.projected_gravity, noise=GaussianNoise(mean=0.0, std=0.025), clip=(-100.0, 100.0), scale=1.0
+        )
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel_exclude_wheel,
+            params={"wheel_joints_name": ["wheel_[RL]_Joint"]},
+            noise=GaussianNoise(mean=0.0, std=0.01),
+        )
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel, noise=GaussianNoise(mean=0.0, std=0.01), clip=(-100.0, 100.0), scale=0.05
+        )
+        last_action = ObsTerm(
+            func=mdp.last_action, noise=GaussianNoise(mean=0.0, std=0.01), clip=(-100.0, 100.0), scale=1.0
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+            self.history_length = 10
+            self.flatten_history_dim = False
+
+    @configclass
+    class CriticCfg(ObsGroup):
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100.0, 100.0), scale=1.0)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, clip=(-100.0, 100.0), scale=1.0)
+        proj_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100.0, 100.0), scale=1.0)
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel, clip=(-100.0, 100.0), scale=1.0)
+        joint_vel = ObsTerm(func=mdp.joint_vel, clip=(-100.0, 100.0), scale=1.0)
+        last_action = ObsTerm(func=mdp.last_action, clip=(-100.0, 100.0), scale=1.0)
+        heights = ObsTerm(func=mdp.height_scan, params={"sensor_cfg": SceneEntityCfg("height_scanner")})
+        robot_joint_torque = ObsTerm(func=mdp.robot_joint_torque)
+        robot_joint_acc = ObsTerm(func=mdp.robot_joint_acc)
+        feet_lin_vel = ObsTerm(func=mdp.feet_lin_vel, params={"asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*")})
+        robot_mass = ObsTerm(func=mdp.robot_mass)
+        robot_inertia = ObsTerm(func=mdp.robot_inertia)
+        robot_joint_pos = ObsTerm(func=mdp.robot_joint_pos)
+        robot_joint_stiffness = ObsTerm(func=mdp.robot_joint_stiffness)
+        robot_joint_damping = ObsTerm(func=mdp.robot_joint_damping)
+        robot_pos = ObsTerm(func=mdp.robot_pos)
+        robot_vel = ObsTerm(func=mdp.robot_vel)
+        robot_material_properties = ObsTerm(func=mdp.robot_material_properties)
+        feet_contact_force = ObsTerm(
+            func=mdp.robot_contact_force, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*")}
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    @configclass
+    class CommandsObsCfg(ObsGroup):
+        velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+
+    @configclass
+    class ExpertTargetCfg(ObsGroup):
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
+    commands: CommandsObsCfg = CommandsObsCfg()
+    obsHistory: HistoryObsCfg = HistoryObsCfg()
+    expert_target: ExpertTargetCfg | None = None
+
+
+@configclass
+class WFGaitEventsCfg:
+    """Configuration for gait events."""
+
+    prepare_quantity_for_tron1_piper = EventTerm(
+        func=mdp.prepare_quantity_for_tron,
+        mode="startup",
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    add_base_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="base_Link"),
+            "mass_distribution_params": (-5.0, 5.0),
+            "operation": "add",
+        },
+    )
+    add_link_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_[LR]_Link"),
+            "mass_distribution_params": (0.8, 1.2),
+            "operation": "scale",
+        },
+    )
+    radomize_rigid_body_mass_inertia = EventTerm(
+        func=mdp.randomize_rigid_body_mass_inertia,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "mass_inertia_distribution_params": (0.8, 1.2),
+            "operation": "scale",
+        },
+    )
+    robot_physics_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "static_friction_range": (0.4, 1.2),
+            "dynamic_friction_range": (0.7, 0.9),
+            "restitution_range": (0.0, 1.0),
+            "num_buckets": 48,
+        },
+    )
+    robot_joint_stiffness_and_damping = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (32, 48),
+            "damping_distribution_params": (2.0, 3.0),
+            "operation": "abs",
+            "distribution": "uniform",
+        },
+    )
+    robot_center_of_mass = EventTerm(
+        func=mdp.randomize_rigid_body_coms,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "com_distribution_params": ((-0.075, 0.075), (-0.075, 0.075), (-0.075, 0.075)),
+            "operation": "add",
+            "distribution": "uniform",
+        },
+    )
+    reset_robot_base = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={
+            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+            "velocity_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (-0.5, 0.5),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-0.5, 0.5),
+            },
+        },
+    )
+    reset_robot_joints = EventTerm(
+        func=mdp.reset_joints_by_offset,
+        mode="reset",
+        params={"position_range": (-0.2, 0.2), "velocity_range": (-0.5, 0.5)},
+    )
+    randomize_actuator_gains = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (0.5, 2.0),
+            "damping_distribution_params": (0.5, 2.0),
+            "operation": "scale",
+            "distribution": "log_uniform",
+        },
+    )
+    push_robot = EventTerm(
+        func=mdp.apply_external_force_torque_stochastic,
+        mode="interval",
+        interval_range_s=(0.0, 0.0),
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="base_Link"),
+            "force_range": {"x": (-500.0, 500.0), "y": (-500.0, 500.0), "z": (-0.0, 0.0)},
+            "torque_range": {"x": (-50.0, 50.0), "y": (-50.0, 50.0), "z": (-0.0, 0.0)},
+            "probability": 0.002,
+        },
+    )
+
+
+@configclass
+class WFGaitTerminationsCfg:
+    """Termination terms for gait MDP."""
+
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    base_contact = DoneTerm(
+        func=mdp.illegal_contact,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"), "threshold": 1.0},
+    )
 
 
 ############################
@@ -23,15 +342,12 @@ from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
 
 
 @configclass
-class WFGaitRewardsCfg(RewardsCfg):
+class WFGaitRewardsCfg:
     """Rewards for pure gait locomotion on the wheelfoot robot (no wheel usage)."""
 
-    # ---- survival ----
     keep_balance = None
     termination = RewTerm(func=mdp.is_terminated, weight=-1000.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
-
-    # ---- velocity tracking ----
     rew_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp, weight=3.0,
         params={"command_name": "base_velocity", "std": 0.5},
@@ -40,7 +356,6 @@ class WFGaitRewardsCfg(RewardsCfg):
         func=mdp.track_ang_vel_z_exp, weight=1.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
-    # ---- gait reward (force + velocity tracking for alternating contact) ----
     gait_reward = RewTerm(
         func=mdp.GaitReward,
         weight=2.5,
@@ -58,8 +373,6 @@ class WFGaitRewardsCfg(RewardsCfg):
             "max_swing_height": 0.3,
         },
     )
-
-    # ---- standard penalties ----
     pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
     pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.3)
     pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-12.0)
@@ -76,8 +389,6 @@ class WFGaitRewardsCfg(RewardsCfg):
         func=mdp.joint_pos_limits, weight=-8.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
     )
-
-    # ---- heavily penalise wheel velocity (force gait, not rolling) ----
     pen_joint_vel_wheel_l2 = RewTerm(
         func=mdp.joint_vel_l2, weight=-0.5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")},
@@ -86,8 +397,6 @@ class WFGaitRewardsCfg(RewardsCfg):
         func=mdp.joint_vel_l2, weight=-5e-5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
     )
-
-    # ---- contact penalties ----
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts, weight=-5,
         params={
@@ -98,23 +407,8 @@ class WFGaitRewardsCfg(RewardsCfg):
     pen_feet_distance = RewTerm(
         func=mdp.feet_distance,
         weight=-100,
-        params={"min_feet_distance": 0.32,
-                "max_feet_distance": 0.6,
-                "feet_links_name": ["wheel_[RL]_Link"]}
+        params={"min_feet_distance": 0.32, "max_feet_distance": 0.6, "feet_links_name": ["wheel_[RL]_Link"]},
     )
-
-    # ---- explicitly disabled (overridden from base) ----
-    jump_height: RewTerm | None = None
-    jump_landing: RewTerm | None = None
-    jump_upward_vel: RewTerm | None = None
-    jump_flight_vel: RewTerm | None = None
-    jump_tuck: RewTerm | None = None
-    # track_base_height: RewTerm | None = None
-    pen_base_contact: RewTerm | None = None
-    # pen_feet_distance = None
-    rew_leg_symmetry = None
-    rew_same_foot_x_position = None
-    pen_base_height: RewTerm | None = None
 
 
 ############################
@@ -126,14 +420,49 @@ class WFGaitRewardsCfg(RewardsCfg):
 class WFGaitCurriculumCfg:
     """Curriculum for gait environment."""
 
-    lin_vel_levels = CurrTerm(
-        func=mdp.lin_vel_cmd_levels,
-        params={"reward_term_name": "rew_lin_vel_xy"},
-    )
-    ang_vel_levels = CurrTerm(
-        func=mdp.ang_vel_cmd_levels,
-        params={"reward_term_name": "rew_ang_vel_z"},
-    )
+    lin_vel_levels = CurrTerm(func=mdp.lin_vel_cmd_levels, params={"reward_term_name": "rew_lin_vel_xy"})
+    ang_vel_levels = CurrTerm(func=mdp.ang_vel_cmd_levels, params={"reward_term_name": "rew_ang_vel_z"})
+
+
+@configclass
+class WFGaitBaseEnvCfg(ManagerBasedRLEnvCfg):
+    """Gait base env fully defined locally."""
+
+    scene: WFGaitSceneCfg = WFGaitSceneCfg(num_envs=4096, env_spacing=2.5)
+    observations: WFGaitObservarionsCfg = WFGaitObservarionsCfg()
+    actions: WFGaitActionsCfg = WFGaitActionsCfg()
+    commands: WFGaitCommandsCfg = WFGaitCommandsCfg()
+    rewards: WFGaitRewardsCfg = WFGaitRewardsCfg()
+    terminations: WFGaitTerminationsCfg = WFGaitTerminationsCfg()
+    events: WFGaitEventsCfg = WFGaitEventsCfg()
+    curriculum: WFGaitCurriculumCfg = WFGaitCurriculumCfg()
+
+    def __post_init__(self):
+        self.decimation = 4
+        self.episode_length_s = 20.0
+        self.sim.render_interval = 2 * self.decimation
+        self.sim.dt = 0.005
+        self.seed = 42
+
+        if self.scene.height_scanner is not None:
+            self.scene.height_scanner.update_period = self.decimation * self.sim.dt
+        if self.scene.contact_forces is not None:
+            self.scene.contact_forces.update_period = self.sim.dt
+
+        self.scene.robot = WHEELFOOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot.init_state.joint_pos = {
+            "abad_L_Joint": 0.0,
+            "abad_R_Joint": 0.0,
+            "hip_L_Joint": 0.0,
+            "hip_R_Joint": 0.0,
+            "knee_L_Joint": 0.0,
+            "knee_R_Joint": 0.0,
+        }
+
+        self.events.add_base_mass.params["asset_cfg"].body_names = "base_Link"
+        self.events.add_base_mass.params["mass_distribution_params"] = (-1.0, 2.0)
+        self.terminations.base_contact.params["sensor_cfg"].body_names = "base_Link"
+        self.viewer.origin_type = "env"
 
 
 ############################
@@ -142,29 +471,18 @@ class WFGaitCurriculumCfg:
 
 
 @configclass
-class WFGaitFlatEnvCfg(WFBaseEnvCfg):
-    """Wheelfoot robot using pure gait (no wheel rolling) on flat terrain.
-
-    The robot walks using alternating leg stance like a biped.
-    Wheel joints are heavily penalised to prevent rolling.
-    No height map — blind flat environment.
-    """
+class WFGaitFlatEnvCfg(WFGaitBaseEnvCfg):
+    """Wheelfoot robot using pure gait (no wheel rolling) on flat terrain."""
 
     def __post_init__(self):
         super().__post_init__()
 
-        # ===================== no height scanner (blind) =====================
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
-
-        # ===================== rewards =====================
         self.rewards = WFGaitRewardsCfg()
-
-        # ===================== curriculum =====================
         self.curriculum = WFGaitCurriculumCfg()
 
-        # ===================== gait command =====================
         self.commands.gait_command = mdp.UniformGaitCommandCfg(
             resampling_time_range=(5.0, 5.0),
             debug_vis=False,
@@ -175,23 +493,18 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
                 swing_height=(0.3, 0.3),
             ),
         )
-
-        # ===================== height command =====================
         self.commands.height_command = mdp.HeightCommandCfg(
             resampling_time_range=(10.0, 10.0),
             debug_vis=False,
             min_height=0.70,
             max_height=0.90,
         )
-
-        # ===================== observations =====================
         self.observations.commands.gait_command = ObsTerm(
             func=mdp.get_gait_command, params={"command_name": "gait_command"}
         )
         self.observations.commands.height_command = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "height_command"}
         )
-        # ===================== velocity command =====================
         self.commands.base_velocity = mdp.UniformLevelVelocityCommandCfg(
             asset_name="robot",
             heading_command=True,
@@ -237,15 +550,11 @@ class WFGaitFlatEnvCfg_PLAY(WFGaitFlatEnvCfg):
 
 @configclass
 class WFGaitRoughEnvCfg(WFGaitFlatEnvCfg):
-    """Wheelfoot robot using pure gait on rough terrain (waves, boxes, random_rough — no stairs).
-
-    Height scanner enabled so the policy can perceive terrain.
-    """
+    """Wheelfoot robot using pure gait on rough terrain."""
 
     def __post_init__(self):
         super().__post_init__()
 
-        # ===================== height scanner =====================
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -254,7 +563,6 @@ class WFGaitRoughEnvCfg(WFGaitFlatEnvCfg):
             mesh_prim_paths=["/World/ground"],
         )
         self.scene.height_scanner.update_period = self.decimation * self.sim.dt
-        # ===================== rough terrain (no stairs) =====================
         self.scene.terrain.terrain_type = "generator"
         self.scene.terrain.terrain_generator = BLIND_ROUGH_TERRAINS_CFG
 
@@ -273,6 +581,5 @@ class WFGaitRoughEnvCfg_PLAY(WFGaitRoughEnvCfg):
         self.commands.base_velocity.ranges.lin_vel_y = (0.5, 0.5)
         self.curriculum = None
 
-        # spawn randomly across terrain grid
         self.scene.terrain.max_init_terrain_level = None
         self.scene.terrain.terrain_generator = BLIND_ROUGH_TERRAINS_PLAY_CFG
