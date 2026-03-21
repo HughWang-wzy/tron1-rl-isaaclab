@@ -21,14 +21,15 @@ from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
 # Wheelfoot Gait Rewards
 ############################
 
+
 @configclass
 class WFGaitRewardsCfg(RewardsCfg):
     """Rewards for pure gait locomotion on the wheelfoot robot (no wheel usage)."""
 
     # ---- survival ----
-    # keep_balance = RewTerm(func=mdp.stay_alive, weight=4.0)
-    termination = RewTerm(func=mdp.is_terminated, weight=-150.0)
-    stand_still = RewTerm(func=mdp.stand_still, weight=-2.0)
+    keep_balance = None
+    termination = RewTerm(func=mdp.is_terminated, weight=-1000.0)
+    stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
 
     # ---- velocity tracking ----
     rew_lin_vel_xy = RewTerm(
@@ -42,7 +43,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     # ---- gait reward (force + velocity tracking for alternating contact) ----
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=2.0,
+        weight=2.5,
         params={
             "tracking_contacts_shaped_force": -1.0,
             "tracking_contacts_shaped_vel": -1.0,
@@ -61,9 +62,9 @@ class WFGaitRewardsCfg(RewardsCfg):
     # ---- standard penalties ----
     pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
     pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.3)
-    pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-10.0)
+    pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-12.0)
     track_base_height = RewTerm(
-        func=mdp.track_base_height_from_command, weight=2.0,
+        func=mdp.track_base_height_from_command, weight=5.0,
         params={"command_name": "height_command", "sigma": 0.2},
     )
     pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
@@ -78,7 +79,7 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- heavily penalise wheel velocity (force gait, not rolling) ----
     pen_joint_vel_wheel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-0.2,
+        func=mdp.joint_vel_l2, weight=-0.5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")},
     )
     pen_vel_non_wheel_l2 = RewTerm(
@@ -88,7 +89,7 @@ class WFGaitRewardsCfg(RewardsCfg):
 
     # ---- contact penalties ----
     undesired_contacts = RewTerm(
-        func=mdp.undesired_contacts, weight=-0.5,
+        func=mdp.undesired_contacts, weight=-5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["abad_.*", "hip_.*", "knee_.*", "base_Link"]),
             "threshold": 10.0,
@@ -96,7 +97,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     )
     pen_feet_distance = RewTerm(
         func=mdp.feet_distance,
-        weight=-20,
+        weight=-100,
         params={"min_feet_distance": 0.32,
                 "max_feet_distance": 0.6,
                 "feet_links_name": ["wheel_[RL]_Link"]}
@@ -108,7 +109,7 @@ class WFGaitRewardsCfg(RewardsCfg):
     jump_upward_vel: RewTerm | None = None
     jump_flight_vel: RewTerm | None = None
     jump_tuck: RewTerm | None = None
-    track_base_height: RewTerm | None = None
+    # track_base_height: RewTerm | None = None
     pen_base_contact: RewTerm | None = None
     # pen_feet_distance = None
     rew_leg_symmetry = None
@@ -171,7 +172,7 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
                 frequencies=(1.5, 2.5),
                 offsets=(0.5, 0.5),
                 durations=(0.5, 0.5),
-                swing_height=(0.1, 0.2),
+                swing_height=(0.3, 0.3),
             ),
         )
 
@@ -208,7 +209,7 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
             limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
                 lin_vel_x=(-1.0, 1.0),
                 lin_vel_y=(-0.5, 0.5),
-                ang_vel_z=(-math.pi/2, math.pi/2),
+                ang_vel_z=(-math.pi, math.pi),
                 heading=(-math.pi, math.pi),
             ),
         )
@@ -224,8 +225,8 @@ class WFGaitFlatEnvCfg_PLAY(WFGaitFlatEnvCfg):
         self.events.push_robot = None
         self.events.add_base_mass = None
 
-        self.commands.base_velocity.ranges.lin_vel_x = (-0.5, 0.5)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
         self.curriculum = None
 
 

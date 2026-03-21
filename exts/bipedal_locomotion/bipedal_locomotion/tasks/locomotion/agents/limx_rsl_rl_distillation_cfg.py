@@ -30,10 +30,10 @@ WF_JumpDistillationCfg: dict = {
 }
 
 _JUMP_JIT_PATH = os.path.expanduser(
-    "/home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_jump/2026-03-17_23-42-13-rough/exported/policy_all.pt"
+    "./logs/rsl_rl/wf_tron_1a_jump/2026-03-17_23-42-13-rough/exported/policy_all.pt"
 )
 _GAIT_JIT_PATH = os.path.expanduser(
-    "/home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt"
+    "./logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt"
 )
 
 WF_MultiExpertDistillationCfg: dict = {
@@ -60,8 +60,8 @@ WF_MultiExpertDistillationCfg: dict = {
     },
     "algorithm": {
         "class_name": "MultiExpertDistillation",
-        "num_learning_epochs": 1,
-        "gradient_length": 15,
+        "num_learning_epochs": 4,
+        "gradient_length": 12,
         "learning_rate": 1e-4,
         "loss_type": "mse",
         "max_grad_norm": 1.0,
@@ -87,7 +87,7 @@ WF_MultiExpertDistillationCfg: dict = {
     ],
     "teacher_id_obs_group": "env_group",
     "num_steps_per_env": 24,
-    "save_interval": 200,
-    "max_iterations": 5000,
+    "save_interval": 500,
+    "max_iterations": 10000,
     "experiment_name": "wf_multi_expert_distillation",
 }

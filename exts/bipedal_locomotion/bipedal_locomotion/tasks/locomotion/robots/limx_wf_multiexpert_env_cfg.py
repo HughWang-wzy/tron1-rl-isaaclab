@@ -13,6 +13,7 @@ from bipedal_locomotion.tasks.locomotion import mdp
 from bipedal_locomotion.tasks.locomotion.robots.limx_wheelfoot_env_cfg import WFJumpFlatEnvCfg
 from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import ObservarionsCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.managers import EventTermCfg as EventTerm
 
 _BASE_JUMP_STANDING_HEIGHT_INDEX = 2
 _JUMP_VELOCITY_COMMAND_NAME = "base_velocity_jump"
@@ -81,8 +82,21 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         self.curriculum = None
         self.rewards = None
         self.commands.base_jump.assist_force_max = 0.0
-        self.events.push_robot = None
-        self.events.add_base_mass = None
+        self.events.push_robot = EventTerm(
+            func=mdp.apply_external_force_torque_stochastic,
+            mode="interval",
+            interval_range_s=(0.0, 0.0),
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names="base_Link"),
+                "force_range": {
+                    "x": (-500.0, 500.0),
+                    "y": (-500.0, 500.0),
+                    "z": (-0.0, 0.0),
+                },  # force = mass * dv / dt
+                "torque_range": {"x": (-50.0, 50.0), "y": (-50.0, 50.0), "z": (-0.0, 0.0)},
+                "probability": 0.002,  # Expect step = 1 / probability
+            },
+        )
         self.terminations.base_contact = DoneTerm(
             func=mdp.illegal_contact,
             params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"), "threshold": 1.0},
@@ -97,9 +111,9 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             debug_vis=False,
             resampling_time_range=(10.0, 10.0),
             ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-                lin_vel_x=(-1.0, 1.0),
+                lin_vel_x=(-4.0, 4.0),
                 lin_vel_y=(-0.0, 0.0),
-                ang_vel_z=(-0.5, 0.5),
+                ang_vel_z=(-math.pi, math.pi),
                 heading=(-math.pi, math.pi),
             ),
             limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
@@ -118,9 +132,9 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             debug_vis=False,
             resampling_time_range=(10.0, 10.0),
             ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-                lin_vel_x=(-0.5, 0.5),
-                lin_vel_y=(-0.3, 0.3),
-                ang_vel_z=(-0.5, 0.5),
+                lin_vel_x=(-1.0, 1.0),
+                lin_vel_y=(-0.5, 0.5),
+                ang_vel_z=(-math.pi / 2, math.pi / 2),
                 heading=(-math.pi, math.pi),
             ),
             limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
