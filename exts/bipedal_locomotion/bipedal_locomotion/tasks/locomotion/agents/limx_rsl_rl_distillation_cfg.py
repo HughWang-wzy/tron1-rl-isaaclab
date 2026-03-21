@@ -62,7 +62,7 @@ WF_MultiExpertDistillationCfg: dict = {
         "class_name": "MultiExpertDistillation",
         "num_learning_epochs": 1,
         "gradient_length": 15,
-        "learning_rate": 1e-3,
+        "learning_rate": 1e-4,
         "loss_type": "mse",
         "max_grad_norm": 1.0,
         "optimizer": "adam",
