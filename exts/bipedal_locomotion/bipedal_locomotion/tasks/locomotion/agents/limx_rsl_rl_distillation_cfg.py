@@ -66,7 +66,7 @@ WF_MultiExpertDistillationCfg: dict = {
         "loss_type": "mse",
         "max_grad_norm": 1.0,
         "optimizer": "adam",
-        "rollout_action_source": "teacher",
+        "rollout_action_source": "student",  # "teacher" or "student"
     },
     "obs_groups": {
         "student": ["obsHistory_flat", "policy", "commands", "jump_commands", "gait_commands", "env_group"],

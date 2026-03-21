@@ -12,6 +12,7 @@ from isaaclab.managers import SceneEntityCfg
 from bipedal_locomotion.tasks.locomotion import mdp
 from bipedal_locomotion.tasks.locomotion.robots.limx_wheelfoot_env_cfg import WFJumpFlatEnvCfg
 from bipedal_locomotion.tasks.locomotion.cfg.WF.limx_base_env_cfg import ObservarionsCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 
 _BASE_JUMP_STANDING_HEIGHT_INDEX = 2
 _JUMP_VELOCITY_COMMAND_NAME = "base_velocity_jump"
@@ -82,6 +83,10 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         self.commands.base_jump.assist_force_max = 0.0
         self.events.push_robot = None
         self.events.add_base_mass = None
+        self.terminations.base_contact = DoneTerm(
+            func=mdp.illegal_contact,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"), "threshold": 1.0},
+        )
         # ===================== separated velocity commands =====================
         self.commands.base_velocity_jump = mdp.UniformLevelVelocityCommandCfg(
             asset_name="robot",

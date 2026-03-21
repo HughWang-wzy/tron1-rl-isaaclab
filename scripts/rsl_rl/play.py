@@ -39,9 +39,15 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym
 import os
+import copy
 import torch
 
-from rsl_rl.runner import OnPolicyRunner, MoEOnPolicyRunner
+from rsl_rl.runner import (
+    OnPolicyRunner,
+    MoEOnPolicyRunner,
+    DistillationRunner,
+    MultiExpertDistillationRunner,
+)
 
 from isaaclab.envs import ManagerBasedRLEnvCfg,DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.dict import print_dict
@@ -54,20 +60,46 @@ from bipedal_locomotion.utils.wrappers.rsl_rl import RslRlPpoAlgorithmMlpCfg, ex
 
 def main():
     """Play with RSL-RL agent."""
+    def _task_has_entry_point(task_name: str, entry_point_key: str) -> bool:
+        spec = gym.spec(task_name.split(":")[-1])
+        return spec.kwargs.get(entry_point_key) is not None
+
+    def _cfg_to_dict(cfg: dict | object) -> dict:
+        if isinstance(cfg, dict):
+            return copy.deepcopy(cfg)
+        if hasattr(cfg, "to_dict"):
+            return cfg.to_dict()
+        raise TypeError(f"Unsupported config type: {type(cfg)}")
+
+    agent_entry_key = "rsl_rl_cfg_entry_point"
+    if _task_has_entry_point(args_cli.task, "rsl_rl_distillation_cfg_entry_point") and "MultiExpert" in args_cli.task:
+        agent_entry_key = "rsl_rl_distillation_cfg_entry_point"
+    print(f"[INFO] Using agent cfg entry point: {agent_entry_key}")
+
     # parse configuration
     env_cfg: ManagerBasedRLEnvCfg = parse_env_cfg(
         task_name=args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs
     )
-    agent_cfg: RslRlPpoAlgorithmMlpCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    agent_cfg: RslRlPpoAlgorithmMlpCfg | dict = cli_args.parse_rsl_rl_cfg(
+        args_cli.task, args_cli, entry_point_key=agent_entry_key
+    )
+    agent_cfg_dict = _cfg_to_dict(agent_cfg)
 
-    env_cfg.seed = agent_cfg.seed
+    if isinstance(agent_cfg, dict):
+        env_cfg.seed = agent_cfg.get("seed")
+    else:
+        env_cfg.seed = agent_cfg.seed
 
     # specify directory for logging experiments
     if args_cli.checkpoint_path is None:
-        log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+        log_root_path = os.path.join("logs", "rsl_rl", agent_cfg_dict["experiment_name"])
         log_root_path = os.path.abspath(log_root_path)
         print(f"[INFO] Loading experiment from directory: {log_root_path}")
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = get_checkpoint_path(
+            log_root_path,
+            agent_cfg_dict.get("load_run", ".*"),
+            agent_cfg_dict.get("load_checkpoint", ".*"),
+        )
     else:
         resume_path = args_cli.checkpoint_path
     log_dir = os.path.dirname(resume_path)
@@ -94,21 +126,31 @@ def main():
     env = RslRlVecEnvWrapper(env)
     # load previously trained model
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-    runner_class_name = agent_cfg.to_dict().get("class_name", "OnPolicyRunner")
-    runner_cls = {"OnPolicyRunner": OnPolicyRunner, "MoEOnPolicyRunner": MoEOnPolicyRunner}.get(
+    runner_class_name = agent_cfg_dict.get("class_name", "OnPolicyRunner")
+    runner_cls = {
+        "OnPolicyRunner": OnPolicyRunner,
+        "MoEOnPolicyRunner": MoEOnPolicyRunner,
+        "DistillationRunner": DistillationRunner,
+        "MultiExpertDistillationRunner": MultiExpertDistillationRunner,
+    }.get(
         runner_class_name, OnPolicyRunner
     )
-    ppo_runner = runner_cls(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    runner_device = agent_cfg_dict.get("device", args_cli.device if args_cli.device is not None else "cpu")
+    ppo_runner = runner_cls(env, agent_cfg_dict, log_dir=None, device=runner_device)
     ppo_runner.load(resume_path)
 
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
-    encoder = ppo_runner.get_inference_encoder(device=env.unwrapped.device)
+    use_encoder_path = hasattr(ppo_runner, "get_inference_encoder")
+    if use_encoder_path:
+        encoder = ppo_runner.get_inference_encoder(device=env.unwrapped.device)
+    else:
+        encoder = None
 
     # export policy to onnx
     if EXPORT_POLICY:
         export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-        if hasattr(ppo_runner.alg.actor_critic, "actor"):
+        if hasattr(ppo_runner.alg, "actor_critic") and hasattr(ppo_runner.alg.actor_critic, "actor"):
             # Standard ActorCritic — export actor as JIT and ONNX
             export_policy_as_jit(
                 ppo_runner.alg.actor_critic, export_model_dir
@@ -122,36 +164,40 @@ def main():
             )
         else:
             # MoE actor — JIT/ONNX export not yet supported for MoE
-            print("[WARN] MoE actor does not support JIT/ONNX export yet. Skipping policy export.")
-        export_mlp_as_onnx(
-            ppo_runner.alg.encoder,
-            export_model_dir,
-            "encoder",
-            ppo_runner.alg.encoder.num_input_dim,
-        )
+            print("[WARN] MoE/Distillation actor does not support this JIT/ONNX export path. Skipping policy export.")
+        if hasattr(ppo_runner.alg, "encoder"):
+            export_mlp_as_onnx(
+                ppo_runner.alg.encoder,
+                export_model_dir,
+                "encoder",
+                ppo_runner.alg.encoder.num_input_dim,
+            )
     # reset environment
-    # obs, obs_dict = env.get_observations()
-    obs_dict = (env.get_observations()).to_dict()
-    obs = obs_dict["policy"]
-    obs_dict = {"observations": obs_dict}
-    obs_history = obs_dict["observations"].get("obsHistory")
-    obs_history = obs_history.flatten(start_dim=1)
-    commands = obs_dict["observations"].get("commands") 
+    obs_td = env.get_observations().to(env.unwrapped.device)
+    if use_encoder_path:
+        obs_dict = obs_td.to_dict()
+        obs = obs_dict["policy"]
+        infos = {"observations": obs_dict}
+        obs_history = infos["observations"]["obsHistory"].flatten(start_dim=1)
+        commands = infos["observations"].get("commands")
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
-            est = encoder(obs_history)
-            actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
+            if use_encoder_path:
+                est = encoder(obs_history)
+                actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
+            else:
+                actions = policy(obs_td)
             # env stepping
-            (obs_dict, rewards, dones, infos) = env.step(actions)
-            obs_dict = obs_dict.to_dict()
-            obs = obs_dict["policy"]
-            
-            infos = {"observations": obs_dict}
-            obs_history = infos["observations"]["obsHistory"].flatten(start_dim=1)
-            commands = infos["observations"].get("commands") 
+            (obs_td, rewards, dones, infos) = env.step(actions)
+            if use_encoder_path:
+                obs_dict = obs_td.to_dict()
+                obs = obs_dict["policy"]
+                infos = {"observations": obs_dict}
+                obs_history = infos["observations"]["obsHistory"].flatten(start_dim=1)
+                commands = infos["observations"].get("commands")
 
     # close the simulator
     env.close()

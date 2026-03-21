@@ -26,7 +26,8 @@ class WFGaitRewardsCfg(RewardsCfg):
     """Rewards for pure gait locomotion on the wheelfoot robot (no wheel usage)."""
 
     # ---- survival ----
-    keep_balance = RewTerm(func=mdp.stay_alive, weight=4.0)
+    # keep_balance = RewTerm(func=mdp.stay_alive, weight=4.0)
+    termination = RewTerm(func=mdp.is_terminated, weight=-150.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-2.0)
 
     # ---- velocity tracking ----
