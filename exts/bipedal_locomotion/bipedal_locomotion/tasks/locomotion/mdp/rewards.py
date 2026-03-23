@@ -387,6 +387,8 @@ class GaitReward(ManagerTermBase):
         self.swing_height_scale = float(cfg.params.get("swing_height_scale", 0.0))
         self.foot_radius = float(cfg.params.get("foot_radius", 0.05))
         self.max_swing_height = float(cfg.params.get("max_swing_height", 0.15))
+        self.velocity_command_name = cfg.params.get("velocity_command_name", "base_velocity")
+        self.standstill_threshold = float(cfg.params.get("standstill_threshold", 0.1))
         self.dt = env.step_dt
 
     def __call__(
@@ -420,6 +422,11 @@ class GaitReward(ManagerTermBase):
         # Update contact targets
         desired_contact_states = self.compute_contact_targets(gait_params)
 
+        # Standstill override: when velocity command is near zero, all feet should be in contact
+        vel_cmd = env.command_manager.get_command(self.velocity_command_name)
+        standstill_mask = torch.norm(vel_cmd[:, :2], dim=1) < self.standstill_threshold
+        desired_contact_states[standstill_mask] = 1.0
+
         # Force-based reward
         foot_forces = torch.norm(self.contact_sensor.data.net_forces_w[:, self.sensor_cfg.body_ids], dim=-1)
         force_reward = self._compute_force_reward(foot_forces, desired_contact_states)
@@ -438,6 +445,7 @@ class GaitReward(ManagerTermBase):
             # (1 - desired_contact) = swing phase weight
             height_reward = self.swing_height_scale * torch.sum(
                 (1 - desired_contact_states) * clamped_heights, dim=1
+            
             )
 
         # Combine rewards

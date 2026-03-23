@@ -14,7 +14,7 @@ The exported model embeds:
 
 Input contract for exported ``policy_all.pt``:
 
-/home/hugh/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/export_policy_all.py --encoder-onnx /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/encoder.onnx --policy-onnx /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy.onnx --output /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt --overwrite
+python scripts/rsl_rl/export_policy_all.py --encoder-onnx /exported/encoder.onnx --policy-onnx policy.onnx --output /exported/policy_all.pt --overwrite
 Exported: /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt
 Source: encoder=/home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/encoder.onnx, policy=/home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy.onnx
 Input dim: 316
