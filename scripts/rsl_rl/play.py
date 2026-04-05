@@ -40,6 +40,7 @@ simulation_app = app_launcher.app
 import gymnasium as gym
 import os
 import copy
+import json
 import torch
 
 from rsl_rl.runner import (
@@ -55,7 +56,12 @@ from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 # Import extensions to set up environment tasks
 import bipedal_locomotion  # noqa: F401
-from bipedal_locomotion.utils.wrappers.rsl_rl import RslRlPpoAlgorithmMlpCfg, export_mlp_as_onnx, export_policy_as_jit
+from bipedal_locomotion.utils.wrappers.rsl_rl import (
+    RslRlPpoAlgorithmMlpCfg,
+    export_mlp_as_onnx,
+    export_module_as_jit,
+    export_policy_as_jit,
+)
 
 
 def main():
@@ -70,6 +76,43 @@ def main():
         if hasattr(cfg, "to_dict"):
             return cfg.to_dict()
         raise TypeError(f"Unsupported config type: {type(cfg)}")
+
+    def _export_multi_expert_student(student, export_model_dir: str) -> None:
+        os.makedirs(export_model_dir, exist_ok=True)
+
+        layout = student.export_layout_metadata()
+        full_input_dim = layout["input_dim"]
+        head_input_dim = student.obs_dim
+
+        export_module_as_jit(student.as_jit(), export_model_dir, "student_policy")
+        export_mlp_as_onnx(student.as_jit(), export_model_dir, "student_policy", full_input_dim)
+
+        if student.encoder is not None:
+            export_mlp_as_onnx(student.encoder, export_model_dir, "encoder", student.encoder.num_input_dim)
+
+        export_mlp_as_onnx(student.as_deploy_head(), export_model_dir, "policy", head_input_dim)
+
+        export_meta = {
+            "export_type": "multi_expert_student",
+            "task": args_cli.task,
+            "checkpoint": os.path.abspath(resume_path),
+            "student_obs_groups": ["obsHistory_flat", "policy", "commands", "jump_commands", "gait_commands", "env_group"],
+            "policy_head_input_order": ["encoder_out", "policy", "commands", "jump_commands", "gait_commands", "env_group"],
+            "artifacts": {
+                "student_policy_jit": "student_policy.pt",
+                "student_policy_onnx": "student_policy.onnx",
+                "encoder_onnx": "encoder.onnx" if student.encoder is not None else None,
+                "policy_head_onnx": "policy.onnx",
+            },
+            "dims": {
+                **layout,
+                "policy_head_input_dim": head_input_dim,
+            },
+        }
+        meta_path = os.path.join(export_model_dir, "deploy_meta.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(export_meta, f, indent=2, sort_keys=True)
+        print("Exported multi-expert deploy metadata to: ", meta_path)
 
     agent_entry_key = "rsl_rl_cfg_entry_point"
     if _task_has_entry_point(args_cli.task, "rsl_rl_distillation_cfg_entry_point") and "MultiExpert" in args_cli.task:
@@ -162,6 +205,8 @@ def main():
                 "policy",
                 ppo_runner.alg.actor_critic.num_actor_obs,
             )
+        elif hasattr(ppo_runner.alg, "student"):
+            _export_multi_expert_student(ppo_runner.alg.student, export_model_dir)
         else:
             # MoE actor — JIT/ONNX export not yet supported for MoE
             print("[WARN] MoE/Distillation actor does not support this JIT/ONNX export path. Skipping policy export.")

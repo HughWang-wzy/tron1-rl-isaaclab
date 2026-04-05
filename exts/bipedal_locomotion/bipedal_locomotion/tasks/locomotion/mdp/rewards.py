@@ -225,28 +225,56 @@ def no_contact(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tens
 
 
 def stand_still(
-    env, lin_threshold: float = 0.05, ang_threshold: float = 0.05, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+    env,
+    lin_threshold: float = 0.05,
+    ang_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_name: str = "base_velocity",
+    target_joint_positions: dict[str, float] | None = None,
+    joint_pos_weight: float = 1.0,
+    sensor_cfg: SceneEntityCfg | None = None,
+    no_contact_threshold: float = 1.0,
+    no_contact_weight: float = 1.0,
 ) -> torch.Tensor:
     """
-    penalizing linear and angular motion when command velocities are near zero.
+    Penalize base motion when command velocities are near zero.
+
+    Optionally also penalize selected joints deviating from target positions
+    while the robot is commanded to stand still. If a contact sensor is
+    provided, also penalize the case where both feet are off the ground.
     """
 
     asset = env.scene[asset_cfg.name]
     base_lin_vel = asset.data.root_lin_vel_w[:, :2]
     base_ang_vel = asset.data.root_ang_vel_w[:, -1]
 
-    commands = env.command_manager.get_command("base_velocity")
+    commands = env.command_manager.get_command(command_name)
 
     lin_commands = commands[:, :2]
     ang_commands = commands[:, 2]
+    lin_cmd_is_still = torch.norm(lin_commands, dim=1, keepdim=True) < lin_threshold
+    ang_cmd_is_still = torch.abs(ang_commands) < ang_threshold
+    stand_still_mask = (lin_cmd_is_still.squeeze(-1) & ang_cmd_is_still).float()
 
-    reward_lin = torch.sum(
-        torch.abs(base_lin_vel) * (torch.norm(lin_commands, dim=1, keepdim=True) < lin_threshold), dim=-1
-    )
-
-    reward_ang = torch.abs(base_ang_vel) * (torch.abs(ang_commands) < ang_threshold)
-
+    reward_lin = torch.sum(torch.abs(base_lin_vel) * lin_cmd_is_still, dim=-1)
+    reward_ang = torch.abs(base_ang_vel) * ang_cmd_is_still
     total_reward = reward_lin + reward_ang
+
+    if target_joint_positions:
+        joint_error = torch.zeros(env.num_envs, device=env.device)
+        for joint_name, target_pos in target_joint_positions.items():
+            joint_ids, _ = asset.find_joints(joint_name)
+            joint_error += torch.abs(asset.data.joint_pos[:, joint_ids[0]] - target_pos)
+
+        total_reward += joint_pos_weight * joint_error * stand_still_mask
+
+    if sensor_cfg is not None:
+        contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        latest_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids, 2]
+        contacts = latest_contact_forces > no_contact_threshold
+        both_feet_off_ground = (torch.sum(contacts.float(), dim=1) == 0).float()
+        total_reward += no_contact_weight * both_feet_off_ground * stand_still_mask
+
     return total_reward
 
 
@@ -520,6 +548,120 @@ class GaitReward(ManagerTermBase):
                 reward += desired_contacts[:, i] * torch.exp(-velocities[:, i] ** 2 / self.vel_sigma)
 
         return (reward / velocities.shape[1]) * self.vel_scale
+
+
+class GaitSymmetryReward(ManagerTermBase):
+    """Penalize left-right gait asymmetry in both foot trajectories and contact states.
+
+    The left foot at time t should match the mirrored right foot at time
+    t - offset * T and vice versa, where offset comes from the gait command.
+    This makes the symmetry check invariant to robot heading.
+
+    Symmetry conditions (with commanded phase delay):
+      - xz: left(t) ≈ right(t - offset * T)
+      - y:  left(t) ≈ -right(t - offset * T)  (mirror-symmetric)
+      - contact: left(t) ≈ right_contact(t - offset * T)
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.asset_cfg = cfg.params["asset_cfg"]
+        self.asset: Articulation = env.scene[self.asset_cfg.name]
+        self.command_name = cfg.params["command_name"]
+        self.sensor_cfg = cfg.params.get("sensor_cfg")
+        self.contact_sensor: ContactSensor | None = None
+        if self.sensor_cfg is not None:
+            self.contact_sensor = env.scene.sensors[self.sensor_cfg.name]
+        self.contact_force_threshold = cfg.params.get("contact_force_threshold", 1.0)
+        self.contact_weight = cfg.params.get("contact_weight", 0.5)
+        self.dt = env.step_dt
+
+        # Circular buffer for foot positions relative to base.
+        # With the current gait config, offset=0.5 and min freq=1.5 Hz,
+        # the maximum commanded delay is about 0.33 s ≈ 17 steps at 0.02 s dt.
+        self.max_delay = int(cfg.params.get("max_delay_steps", 50))
+        # Buffer stores xyz for both feet: (num_envs, 2_feet, 3_xyz, max_delay)
+        self.pos_buffer = torch.zeros(self.num_envs, 2, 3, self.max_delay, device=env.device)
+        self.contact_buffer = (
+            torch.zeros(self.num_envs, 2, self.max_delay, device=env.device)
+            if self.contact_sensor is not None
+            else None
+        )
+        self.buf_idx = 0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name,
+        asset_cfg,
+        sensor_cfg: SceneEntityCfg | None = None,
+        contact_force_threshold: float = 1.0,
+        contact_weight: float = 0.5,
+        max_delay_steps=50,
+    ) -> torch.Tensor:
+        # Foot positions expressed in the base frame: (num_envs, 2_feet, 3_xyz)
+        foot_pos_w = self.asset.data.body_link_pos_w[:, self.asset_cfg.body_ids]
+        base_pos_w = self.asset.data.root_link_state_w[:, :3].unsqueeze(1).expand(-1, foot_pos_w.shape[1], -1)
+        base_quat_w = self.asset.data.root_link_quat_w.unsqueeze(1).expand(-1, foot_pos_w.shape[1], -1)
+        foot_rel = math_utils.quat_apply_inverse(base_quat_w, foot_pos_w - base_pos_w)
+
+        # Clear buffer for newly reset episodes
+        just_reset = self._env.episode_length_buf == 0
+        if just_reset.any():
+            self.pos_buffer[just_reset] = 0.0
+            if self.contact_buffer is not None:
+                self.contact_buffer[just_reset] = 0.0
+
+        # Store current positions in circular buffer
+        self.pos_buffer[:, :, :, self.buf_idx] = foot_rel
+
+        # Compute commanded phase delay in steps from gait frequency and offset
+        gait_params = env.command_manager.get_command(self.command_name)
+        freq = gait_params[:, 0].clamp_min(1.0e-6)
+        phase_offset = torch.remainder(gait_params[:, 1], 1.0)
+        phase_delay_steps = (phase_offset / (freq * self.dt)).long().clamp(1, self.max_delay - 1)
+
+        # Read delayed positions: (num_envs, 3)
+        delayed_idx = (self.buf_idx - phase_delay_steps) % self.max_delay
+        env_arange = torch.arange(self.num_envs, device=env.device)
+        delayed_L = self.pos_buffer[env_arange, 0, :, delayed_idx]  # (num_envs, 3)
+        delayed_R = self.pos_buffer[env_arange, 1, :, delayed_idx]  # (num_envs, 3)
+
+        # Build mirror target: xz same sign, y flipped.
+        # left(t) should match mirror(right(t - offset * T))
+        mirror_R = delayed_R.clone()
+        mirror_R[:, 1] = -mirror_R[:, 1]  # flip y
+        mirror_L = delayed_L.clone()
+        mirror_L[:, 1] = -mirror_L[:, 1]  # flip y
+
+        # Position symmetry error
+        position_error = (foot_rel[:, 0] - mirror_R).square().sum(dim=1) + \
+                         (foot_rel[:, 1] - mirror_L).square().sum(dim=1)
+        error = position_error
+
+        # Contact symmetry error: current foot contact should match the opposite
+        # foot's delayed contact state under the commanded phase offset.
+        if self.contact_sensor is not None and self.contact_buffer is not None:
+            contact_forces = torch.norm(
+                self.contact_sensor.data.net_forces_w[:, self.sensor_cfg.body_ids], dim=-1
+            )
+            contact_state = (contact_forces > self.contact_force_threshold).float()
+            self.contact_buffer[:, :, self.buf_idx] = contact_state
+
+            delayed_contact_L = self.contact_buffer[env_arange, 0, delayed_idx]
+            delayed_contact_R = self.contact_buffer[env_arange, 1, delayed_idx]
+            contact_error = 0.5 * (
+                torch.abs(contact_state[:, 0] - delayed_contact_R)
+                + torch.abs(contact_state[:, 1] - delayed_contact_L)
+            )
+            error = error + self.contact_weight * contact_error
+
+        # Only penalize once enough history is available
+        valid = (self._env.episode_length_buf >= phase_delay_steps).float()
+
+        self.buf_idx = (self.buf_idx + 1) % self.max_delay
+
+        return error * valid
 
 
 class ActionSmoothnessPenalty(ManagerTermBase):

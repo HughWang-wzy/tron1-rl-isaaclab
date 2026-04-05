@@ -111,6 +111,125 @@ def apply_external_force_torque_stochastic_additional(
     # note: these are only applied when you call: `asset.write_data_to_sim()`
     asset.permanent_wrench_composer.set_forces_and_torques(forces, torques, env_ids=masked_env_ids, body_ids=asset_cfg.body_ids)
 
+
+def reset_robot_fallen_state(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    probability: float,
+    base_height_range: tuple[float, float],
+    pitch_range: tuple[float, float],
+    roll_range: tuple[float, float],
+    yaw_range: tuple[float, float],
+    xy_range: tuple[float, float],
+    velocity_range: dict[str, tuple[float, float]],
+    joint_position_noise_range: tuple[float, float] = (-0.05, 0.05),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Reset a subset of environments from side-lying or supine poses."""
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+    if len(env_ids) == 0 or probability <= 0.0:
+        return
+
+    reset_mask = torch.rand(len(env_ids), device=asset.device) < probability
+    fallen_env_ids = env_ids[reset_mask]
+    if len(fallen_env_ids) == 0:
+        return
+
+    num_resets = len(fallen_env_ids)
+    root_states = asset.data.default_root_state[fallen_env_ids].clone()
+
+    positions = root_states[:, 0:3] + env.scene.env_origins[fallen_env_ids]
+    positions[:, 0] += math_utils.sample_uniform(xy_range[0], xy_range[1], (num_resets,), asset.device)
+    positions[:, 1] += math_utils.sample_uniform(xy_range[0], xy_range[1], (num_resets,), asset.device)
+    positions[:, 2] = math_utils.sample_uniform(base_height_range[0], base_height_range[1], (num_resets,), asset.device)
+
+    yaw = math_utils.sample_uniform(yaw_range[0], yaw_range[1], (num_resets,), asset.device)
+    pose_modes = torch.randint(0, 3, (num_resets,), device=asset.device)
+    roll = torch.zeros(num_resets, device=asset.device)
+    pitch = torch.zeros(num_resets, device=asset.device)
+
+    left_ids = (pose_modes == 0).nonzero(as_tuple=False).squeeze(-1)
+    right_ids = (pose_modes == 1).nonzero(as_tuple=False).squeeze(-1)
+    supine_ids = (pose_modes == 2).nonzero(as_tuple=False).squeeze(-1)
+
+    if len(left_ids) > 0:
+        roll[left_ids] = math_utils.sample_uniform(
+            roll_range[0], roll_range[1], (int(left_ids.numel()),), asset.device
+        )
+    if len(right_ids) > 0:
+        roll[right_ids] = math_utils.sample_uniform(
+            -roll_range[1], -roll_range[0], (int(right_ids.numel()),), asset.device
+        )
+    if len(supine_ids) > 0:
+        pitch[supine_ids] = math_utils.sample_uniform(
+            pitch_range[0], pitch_range[1], (int(supine_ids.numel()),), asset.device
+        )
+
+    orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
+    orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
+
+    vel_range_list = [velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+    vel_ranges = torch.tensor(vel_range_list, device=asset.device)
+    velocities = math_utils.sample_uniform(
+        vel_ranges[:, 0], vel_ranges[:, 1], (num_resets, 6), device=asset.device
+    )
+
+    joint_pos = asset.data.default_joint_pos[fallen_env_ids].clone()
+    joint_vel = asset.data.default_joint_vel[fallen_env_ids].clone()
+    joint_vel.zero_()
+
+    cache_name = f"_{asset_cfg.name}_fallen_reset_joint_ids"
+    leg_joint_ids = getattr(env, cache_name, None)
+    if leg_joint_ids is None:
+        leg_joint_ids = asset.find_joints(
+            [
+                "abad_L_Joint",
+                "abad_R_Joint",
+                "hip_L_Joint",
+                "hip_R_Joint",
+                "knee_L_Joint",
+                "knee_R_Joint",
+            ]
+        )[0]
+        leg_joint_ids = torch.as_tensor(leg_joint_ids, device=asset.device, dtype=torch.long)
+        setattr(env, cache_name, leg_joint_ids)
+
+    left_targets = torch.tensor([0.70, -0.10, 1.00, -0.45, 1.30, -0.95], device=asset.device)
+    right_targets = torch.tensor([0.10, -0.70, 0.45, -1.00, 0.95, -1.30], device=asset.device)
+    supine_targets = torch.tensor([0.25, -0.25, 1.10, -1.10, 1.35, -1.35], device=asset.device)
+
+    if len(left_ids) > 0:
+        joint_pos[left_ids.unsqueeze(-1), leg_joint_ids] = left_targets
+    if len(right_ids) > 0:
+        joint_pos[right_ids.unsqueeze(-1), leg_joint_ids] = right_targets
+    if len(supine_ids) > 0:
+        joint_pos[supine_ids.unsqueeze(-1), leg_joint_ids] = supine_targets
+
+    joint_pos += math_utils.sample_uniform(
+        joint_position_noise_range[0],
+        joint_position_noise_range[1],
+        joint_pos.shape,
+        device=asset.device,
+    )
+    joint_pos = joint_pos.clamp_(
+        asset.data.soft_joint_pos_limits[fallen_env_ids, :, 0],
+        asset.data.soft_joint_pos_limits[fallen_env_ids, :, 1],
+    )
+    joint_vel = joint_vel.clamp_(
+        -asset.data.soft_joint_vel_limits[fallen_env_ids],
+        asset.data.soft_joint_vel_limits[fallen_env_ids],
+    )
+
+    asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=fallen_env_ids)
+    asset.write_root_velocity_to_sim(velocities, env_ids=fallen_env_ids)
+    asset.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=fallen_env_ids)
+    asset.set_joint_position_target(joint_pos, env_ids=fallen_env_ids)
+    asset.set_joint_velocity_target(joint_vel, env_ids=fallen_env_ids)
+
+
 def randomize_rigid_body_mass_inertia(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor | None,

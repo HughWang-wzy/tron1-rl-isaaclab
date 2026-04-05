@@ -38,6 +38,14 @@ class MLPModel(nn.Module):
             f"MLPModel supports 2D/3D observations only, got shape {tuple(tensor.shape)} for '{obs_group}'."
         )
 
+    @staticmethod
+    def _obs_group_dim(obs_tensor: torch.Tensor) -> int:
+        if obs_tensor.ndim == 2:
+            return int(obs_tensor.shape[-1])
+        if obs_tensor.ndim == 3:
+            return int(obs_tensor.shape[1] * obs_tensor.shape[2])
+        raise ValueError(f"MLPModel supports 2D/3D observations only, got shape {tuple(obs_tensor.shape)}.")
+
     def __init__(
         self,
         obs: TensorDict,
@@ -60,6 +68,7 @@ class MLPModel(nn.Module):
         self.policy_obs_groups: list[str] = active_obs_groups
         self.encoder_out_dim = 0
         self.encoder_obs_dim = 0
+        self.encoder_obs_group_dims: dict[str, int] = {}
 
         if encoder_cfg is not None:
             encoder_cfg = dict(encoder_cfg)
@@ -75,6 +84,7 @@ class MLPModel(nn.Module):
                 )
             encoder_input_dim = self._sum_obs_dim(obs, self.encoder_obs_groups)
             self.encoder_obs_dim = encoder_input_dim
+            self.encoder_obs_group_dims = self._resolve_obs_group_dims(obs, self.encoder_obs_groups)
             encoder_class = resolve_callable(encoder_cfg.pop("class_name", "MLP_Encoder"))
             encoder_cfg["num_input_dim"] = encoder_input_dim
             self.encoder = encoder_class(**encoder_cfg)
@@ -89,6 +99,7 @@ class MLPModel(nn.Module):
                     )
 
         self.obs_groups = self.policy_obs_groups
+        self.policy_obs_group_dims = self._resolve_obs_group_dims(obs, self.policy_obs_groups)
         self.policy_obs_dim = self._sum_obs_dim(obs, self.policy_obs_groups)
         self.obs_dim = self.policy_obs_dim + self.encoder_out_dim
 
@@ -160,22 +171,43 @@ class MLPModel(nn.Module):
         """Return a JIT-exportable copy of this model."""
         return _TorchMLPModel(self)
 
+    def as_deploy_head(self) -> nn.Module:
+        """Return a deploy-friendly policy head that expects encoder_out + policy obs."""
+        return _TorchMLPPolicyHead(self)
+
     def _sum_obs_dim(self, obs: TensorDict, active_obs_groups: list[str]) -> int:
         obs_dim = 0
         for obs_group in active_obs_groups:
             obs_tensor = obs[obs_group]
-            if obs_tensor.ndim == 2:
-                obs_dim += int(obs_tensor.shape[-1])
-            elif obs_tensor.ndim == 3:
-                obs_dim += int(obs_tensor.shape[1] * obs_tensor.shape[2])
-            else:
-                raise ValueError(
-                    f"MLPModel supports 2D/3D observations only, got shape {tuple(obs_tensor.shape)} for '{obs_group}'."
-                )
+            obs_dim += self._obs_group_dim(obs_tensor)
         return obs_dim
 
     def _get_latent_dim(self) -> int:
         return self.obs_dim
+
+    def _resolve_obs_group_dims(self, obs: TensorDict, active_obs_groups: list[str]) -> dict[str, int]:
+        return {obs_group: self._obs_group_dim(obs[obs_group]) for obs_group in active_obs_groups}
+
+    def export_layout_metadata(self) -> dict[str, int]:
+        """Metadata describing flattened deploy input layout."""
+        obs_history_dim = 0
+        for candidate in ("obsHistory_flat", "obsHistory"):
+            if candidate in self.encoder_obs_group_dims:
+                obs_history_dim = self.encoder_obs_group_dims[candidate]
+                break
+
+        return {
+            "input_dim": self.encoder_obs_dim + self.policy_obs_dim,
+            "encoder_obs_dim": self.encoder_obs_dim,
+            "encoder_output_dim": self.encoder_out_dim,
+            "policy_obs_dim": self.policy_obs_dim,
+            "obs_history_dim": obs_history_dim,
+            "policy_dim": self.policy_obs_group_dims.get("policy", 0),
+            "commands_dim": self.policy_obs_group_dims.get("commands", 0),
+            "jump_commands_dim": self.policy_obs_group_dims.get("jump_commands", 0),
+            "gait_commands_dim": self.policy_obs_group_dims.get("gait_commands", 0),
+            "env_group_dim": self.policy_obs_group_dims.get("env_group", 0),
+        }
 
 
 class _TorchMLPModel(nn.Module):
@@ -188,6 +220,15 @@ class _TorchMLPModel(nn.Module):
         self.mlp = copy.deepcopy(model.mlp)
         self.encoder_obs_dim = model.encoder_obs_dim
         self.policy_obs_dim = model.policy_obs_dim
+        metadata = model.export_layout_metadata()
+        self.input_dim = metadata["input_dim"]
+        self.obs_history_dim = metadata["obs_history_dim"]
+        self.policy_dim = metadata["policy_dim"]
+        self.commands_dim = metadata["commands_dim"]
+        self.jump_commands_dim = metadata["jump_commands_dim"]
+        self.gait_commands_dim = metadata["gait_commands_dim"]
+        self.env_group_dim = metadata["env_group_dim"]
+        self.encoder_output_dim = metadata["encoder_output_dim"]
         if model.distribution is not None:
             self.deterministic_output = model.distribution.as_deterministic_output_module()
         else:
@@ -200,6 +241,36 @@ class _TorchMLPModel(nn.Module):
             )
             encoder_out = self.encoder(encoder_obs)
             x = torch.cat((encoder_out, policy_obs), dim=-1)
+        x = self.obs_normalizer(x)
+        out = self.mlp(x)
+        return self.deterministic_output(out)
+
+    @torch.jit.export
+    def reset(self) -> None:
+        pass
+
+
+class _TorchMLPPolicyHead(nn.Module):
+    """Deploy head that consumes encoder_out + policy-side observation groups."""
+
+    def __init__(self, model: MLPModel) -> None:
+        super().__init__()
+        self.obs_normalizer = copy.deepcopy(model.obs_normalizer)
+        self.mlp = copy.deepcopy(model.mlp)
+        metadata = model.export_layout_metadata()
+        self.input_dim = model.obs_dim
+        self.encoder_output_dim = metadata["encoder_output_dim"]
+        self.policy_dim = metadata["policy_dim"]
+        self.commands_dim = metadata["commands_dim"]
+        self.jump_commands_dim = metadata["jump_commands_dim"]
+        self.gait_commands_dim = metadata["gait_commands_dim"]
+        self.env_group_dim = metadata["env_group_dim"]
+        if model.distribution is not None:
+            self.deterministic_output = model.distribution.as_deterministic_output_module()
+        else:
+            self.deterministic_output = nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.obs_normalizer(x)
         out = self.mlp(x)
         return self.deterministic_output(out)

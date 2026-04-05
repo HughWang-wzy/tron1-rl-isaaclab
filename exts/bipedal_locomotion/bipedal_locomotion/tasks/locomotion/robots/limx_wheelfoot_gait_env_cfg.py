@@ -3,6 +3,7 @@ import math
 from isaaclab.utils import configclass
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.noise import AdditiveGaussianNoiseCfg as GaussianNoise
@@ -25,71 +26,115 @@ from bipedal_locomotion.tasks.locomotion.cfg.WF.terrains_cfg import (
 @configclass
 class WFGaitRewardsCfg(RewardsCfg):
     """Rewards for pure gait locomotion on the wheelfoot robot (no wheel usage)."""
-
-    # ---- survival ----
+    jump_height: RewTerm | None = None
+    jump_landing: RewTerm | None = None
+    jump_upward_vel: RewTerm | None = None
+    jump_flight_vel: RewTerm | None = None
+    jump_tuck: RewTerm | None = None
     keep_balance = None
+    track_base_height: RewTerm | None = None
+    pen_base_contact: RewTerm | None = None
+    pen_feet_distance = None
+    rew_leg_symmetry = None
+    rew_same_foot_x_position = None
+    pen_base_height: RewTerm | None = None
+    
+    
+    # ---- survival ----
     termination = RewTerm(func=mdp.is_terminated, weight=-1000.0)
-    stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
+    stand_still = RewTerm(
+        func=mdp.stand_still,
+        weight=-4,
+        params={
+            "target_joint_positions": {"abad_L_Joint": 0.0, "abad_R_Joint": 0.0},
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["wheel_L_Link", "wheel_R_Link"]),
+        },
+    )
 
     # ---- velocity tracking ----
     rew_lin_vel_xy = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=3.0,
-        params={"command_name": "base_velocity", "std": 0.5},
+        func=mdp.track_lin_vel_xy_exp, weight=1.5,
+        params={"command_name": "base_velocity", "std": 0.4},
+    )
+    rew_lin_vel_xy_enhanced = RewTerm(
+        func=mdp.track_lin_vel_xy_exp, weight=1.5,
+        params={"command_name": "base_velocity", "std": 0.2},
     )
     rew_ang_vel_z = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=1.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+        func=mdp.track_ang_vel_z_exp, weight=0.75,
+        params={"command_name": "base_velocity", "std": 0.5},
+    )
+    rew_ang_vel_z_enhanced = RewTerm(
+        func=mdp.track_ang_vel_z_exp, weight=0.75,
+        params={"command_name": "base_velocity", "std": 0.25},
     )
     # ---- gait reward (force + velocity tracking for alternating contact) ----
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=2.5,
+        weight=2,
         params={
-            "tracking_contacts_shaped_force": -1.0,
-            "tracking_contacts_shaped_vel": -1.0,
-            "gait_force_sigma": 25.0,
+            "tracking_contacts_shaped_force": -2.0,
+            "tracking_contacts_shaped_vel": -0.0,
+            "gait_force_sigma": 1.0,
             "gait_vel_sigma": 0.25,
             "kappa_gait_probs": 0.05,
             "command_name": "gait_command",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             "asset_cfg": SceneEntityCfg("robot", body_names="wheel_.*"),
-            "swing_height_scale": 2.0,
+            "swing_height_scale": 0.0,
             "foot_radius": 0.13,
             "max_swing_height": 0.3,
         },
     )
+    
+    gait_symmetry = RewTerm(
+        func=mdp.GaitSymmetryReward,
+        weight=-1.5,
+        params={
+            "command_name": "gait_command",
+            "asset_cfg": SceneEntityCfg("robot", body_names=["wheel_L_Link", "wheel_R_Link"]),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["wheel_L_Link", "wheel_R_Link"]),
+            "contact_force_threshold": 1.0,
+            "contact_weight": 1.0,
+        },
+    )
+    # gait_symmetry = None
 
     # ---- standard penalties ----
     pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
-    pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.3)
-    pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-12.0)
+    pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.1)
+    pen_flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-8.0)
     track_base_height = RewTerm(
-        func=mdp.track_base_height_from_command, weight=5.0,
+        func=mdp.track_base_height_from_command, weight=4.0,
+        params={"command_name": "height_command", "sigma": 0.6},
+    )
+    track_base_height_enhanced = RewTerm(
+        func=mdp.track_base_height_from_command, weight=4.0,
         params={"command_name": "height_command", "sigma": 0.2},
     )
-    pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
+    pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.02)
     pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.01)
     pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.000008)
     pen_joint_accel = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    pen_joint_power_l1 = RewTerm(func=mdp.joint_powers_l1, weight=-2e-6)
+    pen_joint_power_l1 = RewTerm(func=mdp.joint_powers_l1, weight=-5e-6)
     pen_non_wheel_pos_limits = RewTerm(
-        func=mdp.joint_pos_limits, weight=-8.0,
+        func=mdp.joint_pos_limits, weight=-0.05,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
     )
 
     # ---- heavily penalise wheel velocity (force gait, not rolling) ----
     pen_joint_vel_wheel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-0.5,
+        func=mdp.joint_vel_l2, weight=-0.05,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="wheel_.+")},
     )
     pen_vel_non_wheel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-5e-5,
+        func=mdp.joint_vel_l2, weight=-1e-5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="(?!wheel_).*")},
     )
 
     # ---- contact penalties ----
     undesired_contacts = RewTerm(
-        func=mdp.undesired_contacts, weight=-5,
+        func=mdp.undesired_contacts, weight=-0.1,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["abad_.*", "hip_.*", "knee_.*", "base_Link"]),
             "threshold": 10.0,
@@ -97,24 +142,11 @@ class WFGaitRewardsCfg(RewardsCfg):
     )
     pen_feet_distance = RewTerm(
         func=mdp.feet_distance,
-        weight=-100,
-        params={"min_feet_distance": 0.32,
-                "max_feet_distance": 0.6,
+        weight=-1,
+        params={"min_feet_distance": 0.2,
+                "max_feet_distance": 0.4,
                 "feet_links_name": ["wheel_[RL]_Link"]}
     )
-
-    # ---- explicitly disabled (overridden from base) ----
-    jump_height: RewTerm | None = None
-    jump_landing: RewTerm | None = None
-    jump_upward_vel: RewTerm | None = None
-    jump_flight_vel: RewTerm | None = None
-    jump_tuck: RewTerm | None = None
-    # track_base_height: RewTerm | None = None
-    pen_base_contact: RewTerm | None = None
-    # pen_feet_distance = None
-    rew_leg_symmetry = None
-    rew_same_foot_x_position = None
-    pen_base_height: RewTerm | None = None
 
 
 ############################
@@ -135,6 +167,17 @@ class WFGaitCurriculumCfg:
         params={"reward_term_name": "rew_ang_vel_z"},
     )
 
+    # wheel_vel_penalty_weight = CurrTerm(
+    #     func=mdp.reward_weight_abs_curriculum,
+    #     params={
+    #         "term_name": "pen_joint_vel_wheel_l2",
+    #         "reward_term_name": "pen_joint_vel_wheel_l2",
+    #         "reward_threshold_ratio": 0.1,
+    #         "step": 0.1,
+    #         "max_abs_weight": 0.5,
+    #         "min_interval_iterations": 500,
+    #     },
+    # )
 
 ############################
 # Wheelfoot Gait Environment
@@ -161,6 +204,11 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
         # ===================== rewards =====================
         self.rewards = WFGaitRewardsCfg()
 
+        self.terminations.low_base_height = DoneTerm(
+            func=mdp.base_height_below_minimum,
+            params={"minimum_height": 0.4},
+        )
+        
         # ===================== curriculum =====================
         self.curriculum = WFGaitCurriculumCfg()
 
@@ -196,7 +244,7 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
             asset_name="robot",
             heading_command=True,
             heading_control_stiffness=1.0,
-            rel_standing_envs=0.02,
+            rel_standing_envs=0.1,
             rel_heading_envs=1.0,
             debug_vis=True,
             resampling_time_range=(10.0, 10.0),
@@ -209,11 +257,10 @@ class WFGaitFlatEnvCfg(WFBaseEnvCfg):
             limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
                 lin_vel_x=(-1.0, 1.0),
                 lin_vel_y=(-0.5, 0.5),
-                ang_vel_z=(-math.pi, math.pi),
+                ang_vel_z=(-math.pi/2, math.pi/2),
                 heading=(-math.pi, math.pi),
             ),
         )
-
 
 @configclass
 class WFGaitFlatEnvCfg_PLAY(WFGaitFlatEnvCfg):

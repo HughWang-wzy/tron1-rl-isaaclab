@@ -10,8 +10,8 @@ python scripts/rsl_rl/play_jit.py \
   --num_envs 32
   
 python scripts/rsl_rl/play_jit.py \
-  --task Isaac-Limx-WF-Gait-Flat-Play-v0 \ 
-  --jit_policy_path /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt \      
+  --task Isaac-Limx-WF-Gait-Flat-Play-v0 \
+  --jit_policy_path /home/hugh/tron1-rl-isaaclab/logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt \
   --obs_groups obsHistory,policy,commands \
   --num_envs 16 \
   --device cuda:0 \
@@ -55,6 +55,7 @@ def _infer_jit_layout(jit_model: torch.jit.ScriptModule) -> dict[str, int]:
         "commands_dim",
         "gait_commands_dim",
         "jump_commands_dim",
+        "env_group_dim",
     ):
         value = _read_positive_int_attr(jit_model, key)
         if value is not None:
@@ -83,6 +84,7 @@ def _infer_expected_input_dim(jit_model: torch.jit.ScriptModule, layout: dict[st
     input_dim += layout.get("commands_dim", 0)
     input_dim += layout.get("gait_commands_dim", 0)
     input_dim += layout.get("jump_commands_dim", 0)
+    input_dim += layout.get("env_group_dim", 0)
     return input_dim if input_dim > 0 else None
 
 
@@ -119,6 +121,7 @@ def _infer_obs_groups_auto(obs: dict | torch.Tensor, layout: dict[str, int], exp
         ("commands_dim", ("commands",)),
         ("gait_commands_dim", ("gait_commands",)),
         ("jump_commands_dim", ("jump_commands",)),
+        ("env_group_dim", ("env_group",)),
     ]
     for layout_key, candidates in mapping:
         if layout.get(layout_key, 0) <= 0:

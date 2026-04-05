@@ -401,6 +401,7 @@ class WFJumpCurriculumCfg(CurriculumCfg):
             "num_steps_per_env": 24,
         },
     )
+    fallen_reset_probability: CurrTerm | None = None
     # disable_base_contact_termination = CurrTerm(
     #     func=mdp.disable_termination,
     #     params={
@@ -433,6 +434,27 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             jump_delta_range=(0.25, 0.5),
             jump_margin=0.5,
             resampling_time_range=(3.0, 10.0),
+        )
+        self.events.reset_fallen_robot = EventTerm(
+            func=mdp.reset_robot_fallen_state,
+            mode="reset",
+            params={
+                "probability": 0.05,
+                "base_height_range": (0.18, 0.30),
+                "pitch_range": (1.35, 1.75),
+                "roll_range": (1.35, 1.75),
+                "yaw_range": (-math.pi, math.pi),
+                "xy_range": (-0.20, 0.20),
+                "velocity_range": {
+                    "x": (-0.2, 0.2),
+                    "y": (-0.2, 0.2),
+                    "z": (-0.1, 0.1),
+                    "roll": (-0.2, 0.2),
+                    "pitch": (-0.2, 0.2),
+                    "yaw": (-0.2, 0.2),
+                },
+                "joint_position_noise_range": (-0.08, 0.08),
+            },
         )
 
         # -- jump command observation (policy needs to know when to jump)
@@ -503,6 +525,15 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "sigma": 0.25,
             },
         )
+        self.rewards.jump_landing = RewTerm(
+            func=mdp.jump_landing_stability,
+            weight=8.0,
+            params={
+                "command_name": "base_jump",
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
+                "sigma": 0.15,
+            },
+        )
         self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
         self.rewards.pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.005)
         # self.rewards.pen_feet_distance = None
@@ -539,20 +570,21 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         # -- base_contact soft penalty (threshold lowered to 10N to be meaningful)
         self.rewards.pen_base_contact = RewTerm(
             func=mdp.base_contact_penalty,
-            weight=-0.01,
+            weight=-0.002,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
                 "threshold": 10.0,
             },
         )
 
-        # -- replace base_contact termination: only terminate when BOTH contact AND bad orientation
+        # -- allow a short recovery window before terminating a fallen robot
         self.terminations.base_contact = DoneTerm(
-            func=mdp.base_contact_and_bad_orientation,
+            func=mdp.base_contact_and_bad_orientation_after_grace,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
-                "limit_angle": 1,
+                "limit_angle": 1.2,
                 "threshold": 1.0,
+                "grace_steps": 40,
             },
         )
 
@@ -563,6 +595,17 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "start_prob": 0.05,
                 "end_prob": 0.5,
                 "start_iteration": 500,
+                "end_iteration": 5000,
+                "num_steps_per_env": 24,
+            },
+        )
+        self.curriculum.fallen_reset_probability = CurrTerm(
+            func=mdp.fallen_reset_probability_curriculum,
+            params={
+                "term_name": "reset_fallen_robot",
+                "start_prob": 0.05,
+                "end_prob": 0.20,
+                "start_iteration": 1000,
                 "end_iteration": 5000,
                 "num_steps_per_env": 24,
             },
@@ -618,6 +661,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.scene.num_envs = 32
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
+        self.events.reset_fallen_robot = None
         self.events.add_base_mass = None
 
         # higher jump probability for demo
@@ -654,6 +698,7 @@ class WFJumpRoughEnvCfg_PLAY(WFJumpRoughEnvCfg):
         self.scene.num_envs = 32
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
+        self.events.reset_fallen_robot = None
         self.events.add_base_mass = None
 
         self.commands.base_velocity.ranges.lin_vel_x = (-3.0, 3.0)

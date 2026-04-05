@@ -81,6 +81,7 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         # Disable all curriculum terms for multi-expert distillation runs.
         self.curriculum = None
         self.rewards = None
+        self.events.reset_fallen_robot = None
         self.commands.base_jump.assist_force_max = 0.0
         self.events.push_robot = EventTerm(
             func=mdp.apply_external_force_torque_stochastic,
@@ -219,9 +220,9 @@ class WFMultiExpertFlatEnvCfg_PLAY(WFMultiExpertFlatEnvCfg):
         self.events.add_base_mass = None
         self.curriculum = None
 
-        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
-        self.commands.base_velocity_jump.ranges.lin_vel_x = (-1.0, 1.0)
-        self.commands.base_velocity_jump.ranges.lin_vel_y = (-0.5, 0.5)
+        # self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        # self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
+        self.commands.base_velocity_jump.ranges.lin_vel_x = (-4.0, 4.0)
+        self.commands.base_velocity_jump.ranges.lin_vel_y = (-0.0, 0.0)
         self.commands.base_velocity_gait.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity_gait.ranges.lin_vel_y = (-0.5, 0.5)

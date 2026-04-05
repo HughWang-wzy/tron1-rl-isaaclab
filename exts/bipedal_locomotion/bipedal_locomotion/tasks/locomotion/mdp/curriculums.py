@@ -134,6 +134,33 @@ def jump_assist_force_curriculum(
     return torch.tensor([current_force], dtype=torch.float32)
 
 
+def fallen_reset_probability_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    term_name: str,
+    start_prob: float,
+    end_prob: float,
+    start_iteration: int,
+    end_iteration: int,
+    num_steps_per_env: int = 24,
+) -> torch.Tensor:
+    """Linearly ramp the reset probability for the fallen-state reset event."""
+    del env_ids
+    iteration = env.common_step_counter / num_steps_per_env
+    if iteration <= start_iteration:
+        prob = start_prob
+    elif iteration >= end_iteration:
+        prob = end_prob
+    else:
+        alpha = (iteration - start_iteration) / (end_iteration - start_iteration)
+        prob = start_prob + alpha * (end_prob - start_prob)
+
+    term_cfg = env.event_manager.get_term_cfg(term_name)
+    term_cfg.params["probability"] = prob
+    env.event_manager.set_term_cfg(term_name, term_cfg)
+    return torch.tensor([prob], dtype=torch.float32)
+
+
 def lin_vel_cmd_levels(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
@@ -213,3 +240,58 @@ def ang_vel_cmd_levels(
 
     max_endpoint = abs(max(ranges.ang_vel_z, key=abs))
     return torch.tensor(max_endpoint, device=env.device)
+
+
+def reward_weight_abs_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    term_name: str,
+    reward_term_name: str,
+    reward_threshold_ratio: float,
+    step: float,
+    max_abs_weight: float,
+    num_steps_per_env: int = 24,
+    min_interval_iterations: int = 0,
+) -> torch.Tensor:
+    """Increase the absolute weight of a reward term with an optional cooldown.
+
+    The adjustment is evaluated on episode boundaries once the tracked reward
+    exceeds the configured threshold and training has passed the initial warmup.
+    After each successful weight change, the term can be updated again only
+    after ``min_interval_iterations`` PPO iterations.
+    """
+    target_term = env.reward_manager.get_term_cfg(reward_term_name)
+    adjusted_term = env.reward_manager.get_term_cfg(term_name)
+
+    reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][env_ids]) / env.max_episode_length_s
+    current_iteration = int(env.common_step_counter / num_steps_per_env)
+    if target_term.weight >= 0.0:
+        reward_threshold = abs(target_term.weight) * reward_threshold_ratio
+    else:
+        reward_threshold = -abs(target_term.weight) * reward_threshold_ratio
+
+    last_update_attr = "_reward_weight_abs_curriculum_last_update_iter"
+    last_update_iters = getattr(env, last_update_attr, {})
+    state_key = term_name
+    last_update_iteration = last_update_iters.get(state_key)
+    interval_satisfied = (
+        last_update_iteration is None
+        or current_iteration - last_update_iteration >= min_interval_iterations
+    )
+
+    if (
+        env.common_step_counter % env.max_episode_length == 0
+        and reward > reward_threshold
+        and abs(reward) > 1e-6
+        and current_iteration > 1000
+        and interval_satisfied
+    ):
+        sign = -1.0 if adjusted_term.weight < 0.0 else 1.0
+        new_abs_weight = min(abs(adjusted_term.weight) + step, max_abs_weight)
+        if new_abs_weight != abs(adjusted_term.weight):
+            adjusted_term.weight = sign * new_abs_weight
+            env.reward_manager.set_term_cfg(term_name, adjusted_term)
+            last_update_iters[state_key] = current_iteration
+            setattr(env, last_update_attr, last_update_iters)
+
+    return torch.tensor(abs(adjusted_term.weight), device=env.device)

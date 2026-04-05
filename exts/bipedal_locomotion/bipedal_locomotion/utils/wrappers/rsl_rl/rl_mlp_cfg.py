@@ -54,6 +54,8 @@ class MoEPpoAlgorithmCfg(RslRlPpoAlgorithmMlpCfg):
 import os
 import copy
 import torch
+
+
 def export_mlp_as_onnx(mlp, path, name, input_dim):
     os.makedirs(path, exist_ok=True)
     path = os.path.join(path, name + ".onnx")
@@ -76,9 +78,16 @@ def export_mlp_as_onnx(mlp, path, name, input_dim):
     )
     print("Exported policy as onnx script to: ", path)
 
-def export_policy_as_jit(actor_critic, path):
+
+def export_module_as_jit(module, path, name):
     os.makedirs(path, exist_ok=True)
-    path = os.path.join(path, "policy.pt")
-    model = copy.deepcopy(actor_critic.actor).to("cpu")
-    traced_script_module = torch.jit.script(model)
-    traced_script_module.save(path)
+    path = os.path.join(path, name + ".pt")
+    model = copy.deepcopy(module).to("cpu")
+    model.eval()
+    scripted_module = torch.jit.script(model)
+    scripted_module.save(path)
+    print("Exported policy as jit script to: ", path)
+
+
+def export_policy_as_jit(actor_critic, path):
+    export_module_as_jit(actor_critic.actor, path, "policy")
