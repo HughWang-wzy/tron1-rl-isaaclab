@@ -230,6 +230,51 @@ def reset_robot_fallen_state(
     asset.set_joint_velocity_target(joint_vel, env_ids=fallen_env_ids)
 
 
+def reset_robot_fallen_state_for_env_group(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    probability: float,
+    target_group: int,
+    num_groups: int,
+    base_height_range: tuple[float, float],
+    pitch_range: tuple[float, float],
+    roll_range: tuple[float, float],
+    yaw_range: tuple[float, float],
+    xy_range: tuple[float, float],
+    velocity_range: dict[str, tuple[float, float]],
+    joint_position_noise_range: tuple[float, float] = (-0.05, 0.05),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Apply fallen-state reset only to the specified expert group."""
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+    if len(env_ids) == 0 or probability <= 0.0:
+        return
+    if target_group < 0 or target_group >= num_groups:
+        raise ValueError(f"target_group must be within [0, {num_groups - 1}], got {target_group}.")
+
+    env_group_ids = env_ids * num_groups // env.num_envs
+    grouped_env_ids = env_ids[env_group_ids == target_group]
+    if len(grouped_env_ids) == 0:
+        return
+
+    reset_robot_fallen_state(
+        env=env,
+        env_ids=grouped_env_ids,
+        probability=probability,
+        base_height_range=base_height_range,
+        pitch_range=pitch_range,
+        roll_range=roll_range,
+        yaw_range=yaw_range,
+        xy_range=xy_range,
+        velocity_range=velocity_range,
+        joint_position_noise_range=joint_position_noise_range,
+        asset_cfg=asset_cfg,
+    )
+
+
 def randomize_rigid_body_mass_inertia(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor | None,
