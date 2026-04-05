@@ -147,13 +147,13 @@ def reset_robot_fallen_state(
     positions[:, 2] = math_utils.sample_uniform(base_height_range[0], base_height_range[1], (num_resets,), asset.device)
 
     yaw = math_utils.sample_uniform(yaw_range[0], yaw_range[1], (num_resets,), asset.device)
-    pose_modes = torch.randint(0, 3, (num_resets,), device=asset.device)
+    pose_selector = torch.rand(num_resets, device=asset.device)
     roll = torch.zeros(num_resets, device=asset.device)
     pitch = torch.zeros(num_resets, device=asset.device)
 
-    left_ids = (pose_modes == 0).nonzero(as_tuple=False).squeeze(-1)
-    right_ids = (pose_modes == 1).nonzero(as_tuple=False).squeeze(-1)
-    supine_ids = (pose_modes == 2).nonzero(as_tuple=False).squeeze(-1)
+    left_ids = (pose_selector < 0.4).nonzero(as_tuple=False).squeeze(-1)
+    right_ids = ((pose_selector >= 0.4) & (pose_selector < 0.8)).nonzero(as_tuple=False).squeeze(-1)
+    supine_ids = (pose_selector >= 0.8).nonzero(as_tuple=False).squeeze(-1)
 
     if len(left_ids) > 0:
         roll[left_ids] = math_utils.sample_uniform(
@@ -197,9 +197,9 @@ def reset_robot_fallen_state(
         leg_joint_ids = torch.as_tensor(leg_joint_ids, device=asset.device, dtype=torch.long)
         setattr(env, cache_name, leg_joint_ids)
 
-    left_targets = torch.tensor([0.70, -0.10, 1.00, -0.45, 1.30, -0.95], device=asset.device)
-    right_targets = torch.tensor([0.10, -0.70, 0.45, -1.00, 0.95, -1.30], device=asset.device)
-    supine_targets = torch.tensor([0.25, -0.25, 1.10, -1.10, 1.35, -1.35], device=asset.device)
+    left_targets = torch.tensor([0.55, -0.10, 0.80, -0.35, 1.05, -0.80], device=asset.device)
+    right_targets = torch.tensor([0.10, -0.55, 0.35, -0.80, 0.80, -1.05], device=asset.device)
+    supine_targets = torch.tensor([0.20, -0.20, 0.90, -0.90, 1.10, -1.10], device=asset.device)
 
     if len(left_ids) > 0:
         joint_pos[left_ids.unsqueeze(-1), leg_joint_ids] = left_targets

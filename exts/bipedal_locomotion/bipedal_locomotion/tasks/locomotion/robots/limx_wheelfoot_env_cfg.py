@@ -439,8 +439,8 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             func=mdp.reset_robot_fallen_state,
             mode="reset",
             params={
-                "probability": 0.05,
-                "base_height_range": (0.18, 0.30),
+                "probability": 0.02,
+                "base_height_range": (0.22, 0.34),
                 "pitch_range": (1.35, 1.75),
                 "roll_range": (1.35, 1.75),
                 "yaw_range": (-math.pi, math.pi),
@@ -453,7 +453,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                     "pitch": (-0.2, 0.2),
                     "yaw": (-0.2, 0.2),
                 },
-                "joint_position_noise_range": (-0.08, 0.08),
+                "joint_position_noise_range": (-0.04, 0.04),
             },
         )
 
@@ -581,7 +581,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         self.terminations.base_contact = DoneTerm(
             func=mdp.base_contact_and_bad_orientation_after_grace,
             params={
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["abad_.*", "hip_.*", "knee_.*", "base_Link"]),
                 "limit_angle": 1.2,
                 "threshold": 1.0,
                 "grace_steps": 40,
@@ -603,10 +603,10 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             func=mdp.fallen_reset_probability_curriculum,
             params={
                 "term_name": "reset_fallen_robot",
-                "start_prob": 0.05,
-                "end_prob": 0.20,
-                "start_iteration": 1000,
-                "end_iteration": 5000,
+                "start_prob": 0.02,
+                "end_prob": 0.10,
+                "start_iteration": 2000,
+                "end_iteration": 7000,
                 "num_steps_per_env": 24,
             },
         )
