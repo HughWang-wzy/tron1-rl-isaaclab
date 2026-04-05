@@ -462,6 +462,10 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             func=mdp.generated_commands, params={"command_name": "base_jump"}
         )
 
+        self.rew_lin_vel_xy = RewTerm(
+            func=mdp.track_lin_vel_xy_exp, weight=3.0, params={"command_name": "base_velocity", "std": 0.3}
+        )
+        
         # -- feet contact state as privileged observation (critic only)
         self.observations.critic.feet_contact = ObsTerm(
             func=mdp.feet_contact_state,
