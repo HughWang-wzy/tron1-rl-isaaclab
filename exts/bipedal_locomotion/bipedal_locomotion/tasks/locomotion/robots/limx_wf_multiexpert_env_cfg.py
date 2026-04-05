@@ -81,6 +81,9 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         # Disable all curriculum terms for multi-expert distillation runs.
         self.curriculum = None
         self.rewards = None
+        # Remove the inherited single-expert velocity command to avoid misleading
+        # debug markers; multi-expert uses the separated jump/gait velocity terms below.
+        self.commands.base_velocity = None
         self.events.reset_fallen_robot = EventTerm(
             func=mdp.reset_robot_fallen_state_for_env_group,
             mode="reset",
@@ -103,6 +106,13 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
                 },
                 "joint_position_noise_range": (-0.04, 0.04),
             },
+        )
+        self.commands.base_jump = mdp.JumpCommandCfg(
+            jump_probability=0.5,
+            standing_height_range=(0.7, 0.9),
+            jump_delta_range=(0.25, 0.5),
+            jump_margin=0.5,
+            resampling_time_range=(3.0, 10.0),
         )
         self.commands.base_jump.assist_force_max = 0.0
         self.events.push_robot = EventTerm(
@@ -166,6 +176,14 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
                 ang_vel_z=(-math.pi / 2, math.pi / 2),
                 heading=(-math.pi, math.pi),
             ),
+        )
+        self.commands.base_velocity_active_debug = mdp.ActiveGroupVelocityCommandCfg(
+            asset_name="robot",
+            jump_velocity_command_name=_JUMP_VELOCITY_COMMAND_NAME,
+            gait_velocity_command_name=_GAIT_VELOCITY_COMMAND_NAME,
+            num_groups=2,
+            jump_group_id=0,
+            debug_vis=False,
         )
 
         # ===================== gait commands =====================
@@ -241,10 +259,11 @@ class WFMultiExpertFlatEnvCfg_PLAY(WFMultiExpertFlatEnvCfg):
         self.events.push_robot = None
         self.events.add_base_mass = None
         self.curriculum = None
+        self.commands.base_velocity_active_debug.debug_vis = True
 
         # self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
         # self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
-        self.commands.base_velocity_jump.ranges.lin_vel_x = (-4.0, 4.0)
+        self.commands.base_velocity_jump.ranges.lin_vel_x = (-2.0, 2.0)
         self.commands.base_velocity_jump.ranges.lin_vel_y = (-0.0, 0.0)
         self.commands.base_velocity_gait.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity_gait.ranges.lin_vel_y = (-0.5, 0.5)

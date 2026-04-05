@@ -30,7 +30,7 @@ WF_JumpDistillationCfg: dict = {
 }
 
 _JUMP_JIT_PATH = os.path.expanduser(
-    "./logs/rsl_rl/wf_tron_1a_jump/2026-03-17_23-42-13-rough/exported/policy_all.pt"
+    "./logs/rsl_rl/wf_tron_1a_jump/2026-04-06_00-06-47/exported/policy_all.pt"
 )
 _GAIT_JIT_PATH = os.path.expanduser(
     # "./logs/rsl_rl/wf_tron_1a_gait/2026-03-15_19-02-27/exported/policy_all.pt"
@@ -64,6 +64,11 @@ WF_MultiExpertDistillationCfg: dict = {
         "num_learning_epochs": 4,
         "gradient_length": 12,
         "learning_rate": 5e-3,
+        "lr_schedule": "reduce_on_plateau",
+        "lr_schedule_factor": 0.5,
+        "lr_schedule_patience": 150,
+        "lr_schedule_threshold": 5e-4,
+        "min_learning_rate": 1e-4,
         "loss_type": "mse",
         "max_grad_norm": 1.0,
         "optimizer": "adam",

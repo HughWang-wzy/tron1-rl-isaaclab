@@ -8,6 +8,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import MLPModel
@@ -84,6 +85,11 @@ class MultiExpertDistillation:
         num_learning_epochs: int = 1,
         gradient_length: int = 15,
         learning_rate: float = 1e-3,
+        lr_schedule: str = "fixed",
+        lr_schedule_factor: float = 0.5,
+        lr_schedule_patience: int = 200,
+        lr_schedule_threshold: float = 1e-3,
+        min_learning_rate: float = 1e-5,
         max_grad_norm: float | None = None,
         loss_type: str = "mse",
         optimizer: str = "adam",
@@ -131,6 +137,24 @@ class MultiExpertDistillation:
         self.teachers = nn.ModuleList([teacher.to(self.device) for teacher in teachers])
         self.expert_action_scales = self._build_expert_action_scale_tensor(expert_action_scales)
         self.optimizer = resolve_optimizer(optimizer)(self.student.parameters(), lr=learning_rate)
+        self.lr_schedule = lr_schedule
+        self.lr_scheduler = None
+        if self.lr_schedule == "fixed":
+            pass
+        elif self.lr_schedule == "reduce_on_plateau":
+            self.lr_scheduler = ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=lr_schedule_factor,
+                patience=lr_schedule_patience,
+                threshold=lr_schedule_threshold,
+                min_lr=min_learning_rate,
+            )
+        else:
+            raise ValueError(
+                "lr_schedule must be either 'fixed' or 'reduce_on_plateau', "
+                f"got '{self.lr_schedule}'."
+            )
 
         self.storage = storage
         self.transition = RolloutStorage.Transition()
@@ -431,6 +455,9 @@ class MultiExpertDistillation:
                 self.student.detach_hidden_state(done_mask)
 
         mean_behavior_loss /= max(num_batches, 1)
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step(mean_behavior_loss)
+            self.learning_rate = float(self.optimizer.param_groups[0]["lr"])
         self.storage.clear()
         self.last_hidden_state = self.student.get_hidden_state()
         self.student.detach_hidden_state()
@@ -459,6 +486,7 @@ class MultiExpertDistillation:
         return {
             "student_state_dict": self.student.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "lr_scheduler_state_dict": self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None,
             "expert_names": self.expert_names,
             "expert_action_scales": self.expert_action_scales.detach().cpu().tolist(),
         }
@@ -477,6 +505,13 @@ class MultiExpertDistillation:
             self.student.load_state_dict(student_state, strict=strict)
         if load_cfg.get("optimizer") and "optimizer_state_dict" in loaded_dict:
             self.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            self.learning_rate = float(self.optimizer.param_groups[0]["lr"])
+        if (
+            load_cfg.get("optimizer")
+            and self.lr_scheduler is not None
+            and loaded_dict.get("lr_scheduler_state_dict") is not None
+        ):
+            self.lr_scheduler.load_state_dict(loaded_dict["lr_scheduler_state_dict"])
         return load_cfg.get("iteration", False)
 
     def get_policy(self) -> MLPModel:

@@ -159,6 +159,7 @@ class MultiExpertDistillationRunner:
         behavior_loss = loss_dict.get("behavior", 0.0)
 
         self.writer.add_scalar("Loss/behavior", behavior_loss, locs["it"])
+        self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         # Log per-expert losses
         for key, value in loss_dict.items():
             if key.startswith("behavior_"):
@@ -191,6 +192,7 @@ class MultiExpertDistillationRunner:
                 f"""{'Computation:':>{pad}} {fps:.0f} steps/s """
                 f"""(collection: {locs['collection_time']:.3f}s, learning: {locs['learn_time']:.3f}s)\n"""
                 f"""{'Behavior loss:':>{pad}} {behavior_loss:.4f}\n"""
+                f"""{'Learning rate:':>{pad}} {self.alg.learning_rate:.6f}\n"""
                 f"""{expert_loss_string}"""
                 f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                 f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
@@ -202,6 +204,7 @@ class MultiExpertDistillationRunner:
                 f"""{'Computation:':>{pad}} {fps:.0f} steps/s """
                 f"""(collection: {locs['collection_time']:.3f}s, learning: {locs['learn_time']:.3f}s)\n"""
                 f"""{'Behavior loss:':>{pad}} {behavior_loss:.4f}\n"""
+                f"""{'Learning rate:':>{pad}} {self.alg.learning_rate:.6f}\n"""
                 f"""{expert_loss_string}"""
             )
 
