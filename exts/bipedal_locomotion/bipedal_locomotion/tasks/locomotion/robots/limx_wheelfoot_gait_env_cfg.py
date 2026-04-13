@@ -267,7 +267,7 @@ class WFGaitFlatEnvCfg_PLAY(WFGaitFlatEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        self.scene.num_envs = 32
+        self.scene.num_envs = 128
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
         self.events.add_base_mass = None

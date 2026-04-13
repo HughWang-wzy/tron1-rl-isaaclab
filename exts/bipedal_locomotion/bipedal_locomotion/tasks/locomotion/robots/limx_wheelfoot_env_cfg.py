@@ -462,8 +462,10 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             func=mdp.generated_commands, params={"command_name": "base_jump"}
         )
 
-        self.rew_lin_vel_xy = RewTerm(
-            func=mdp.track_lin_vel_xy_exp, weight=3.0, params={"command_name": "base_velocity", "std": 0.3}
+        self.rewards.rew_lin_vel_xy = RewTerm(
+            func=mdp.track_lin_vel_xy_exp_adaptive,
+            weight=3.0,
+            params={"command_name": "base_velocity", "std": 0.3, "command_scale": 0.35},
         )
         
         # -- feet contact state as privileged observation (critic only)
@@ -487,8 +489,8 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         
         self.rewards.track_base_height = RewTerm(
             func=mdp.track_base_height_exp,
-            weight=2.0,
-            params={"command_name": "base_jump", "sigma": 0.15},
+            weight=2.5,
+            params={"command_name": "base_jump", "sigma": 0.1},
         )
 
         # -- jump rewards
@@ -499,7 +501,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         )
         self.rewards.jump_upward_vel = RewTerm(
             func=mdp.jump_upward_vel,
-            weight=10.0,
+            weight=20.0,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
             },
@@ -516,7 +518,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         )
         self.rewards.jump_tuck = RewTerm(
             func=mdp.jump_tuck_legs,
-            weight=5.0,
+            weight=10.0,
             params={
                 "command_name": "base_jump",
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
@@ -608,7 +610,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "term_name": "reset_fallen_robot",
                 "start_prob": 0.02,
-                "end_prob": 0.10,
+                "end_prob": 0.2,
                 "start_iteration": 2000,
                 "end_iteration": 7000,
                 "num_steps_per_env": 24,
@@ -665,16 +667,18 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.scene.num_envs = 32
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
-        self.events.reset_fallen_robot = None
+        # self.events.reset_fallen_robot = None
         self.events.add_base_mass = None
+        self.terminations.base_contact = None
 
         # higher jump probability for demo
-        self.commands.base_velocity.ranges.lin_vel_x = (-3.0, 3.0)
-        self.commands.base_jump.jump_probability = 1
+        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
+        self.commands.base_jump.jump_probability = 0
         self.commands.base_jump.resampling_time_range = (3.0, 3.0)
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
         self.curriculum = None
+        self.episode_length_s = 5
 
 
 #############################

@@ -24,6 +24,29 @@ def stay_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Reward for staying alive."""
     return torch.ones(env.num_envs, device=env.device)
 
+
+def track_lin_vel_xy_exp_adaptive(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_scale: float = 0.35,
+) -> torch.Tensor:
+    """Reward xy velocity tracking with a command-scaled tolerance.
+
+    Low-speed commands keep the original strict ``std``. For large commanded
+    speeds, the tolerance grows with command magnitude so the reward does not
+    collapse to near zero before the policy reaches high-speed tracking.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)[:, :2]
+    lin_vel_error = torch.sum(torch.square(command - asset.data.root_lin_vel_b[:, :2]), dim=1)
+
+    command_speed = torch.norm(command, dim=1)
+    adaptive_std = torch.maximum(torch.full_like(command_speed, std), command_scale * command_speed)
+
+    return torch.exp(-lin_vel_error / torch.square(adaptive_std.clamp_min(1e-6)))
+
 def foot_landing_vel(
         env: ManagerBasedRLEnv,
         asset_cfg: SceneEntityCfg,
