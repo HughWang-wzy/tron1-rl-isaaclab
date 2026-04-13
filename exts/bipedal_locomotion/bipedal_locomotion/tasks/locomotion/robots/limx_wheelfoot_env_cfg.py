@@ -432,6 +432,8 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             jump_probability=0.3,
             standing_height_range=(0.7, 0.9),
             jump_delta_range=(0.25, 0.5),
+            crouch_height=0.7,
+            crouch_tolerance=0.02,
             jump_margin=0.5,
             resampling_time_range=(3.0, 10.0),
         )

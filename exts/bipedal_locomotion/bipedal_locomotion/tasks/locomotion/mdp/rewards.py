@@ -748,20 +748,26 @@ class ActionSmoothnessPenalty(ManagerTermBase):
 # ========================
 
 
+def _jump_phase_masks(jump_cmd: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Decode the staged jump command into walk / crouch / jump masks."""
+    phase_signal = jump_cmd[:, 0]
+    walk_phase = phase_signal < 0.25
+    crouch_phase = (phase_signal >= 0.25) & (phase_signal < 0.75)
+    jump_phase = phase_signal >= 0.75
+    return walk_phase, crouch_phase, jump_phase
+
+
 def conditional_lin_vel_z_l2(
     env: ManagerBasedRLEnv,
     command_name: str = "base_jump",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalize z-axis linear velocity only when NOT jumping.
-
-    When jump_active=1, the penalty is suppressed so the robot can move vertically.
-    """
+    """Penalize z-axis linear velocity only during normal walking."""
     asset: Articulation = env.scene[asset_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]  # 0 or 1
+    walk_phase, _, _ = _jump_phase_masks(jump_cmd)
     vel_z = asset.data.root_lin_vel_w[:, 2]
-    return (1.0 - jump_active) * torch.square(vel_z)
+    return walk_phase.float() * torch.square(vel_z)
 
 
 def conditional_flat_orientation_l2(
@@ -770,17 +776,18 @@ def conditional_flat_orientation_l2(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     jump_scale: float = 0.2,
 ) -> torch.Tensor:
-    """Penalize non-flat orientation. Reduced penalty during jump.
+    """Penalize non-flat orientation. Reduced penalty during crouch/jump sequence.
 
     Args:
-        jump_scale: multiplier on the penalty when jumping (e.g., 0.2 = 20% of normal).
+        jump_scale: multiplier on the penalty when crouching or jumping.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    _, crouch_phase, jump_phase = _jump_phase_masks(jump_cmd)
     gravity_b = asset.data.projected_gravity_b
     penalty = torch.sum(torch.square(gravity_b[:, :2]), dim=1)
-    scale = torch.where(jump_active > 0.5, jump_scale, 1.0)
+    phase_active = crouch_phase | jump_phase
+    scale = torch.where(phase_active, jump_scale, 1.0)
     return scale * penalty
 
 
@@ -790,14 +797,10 @@ def conditional_joint_pos_limits(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     jump_scale: float = 0.0,
 ) -> torch.Tensor:
-    """Penalize joint position limit violations, suppressed during jumps.
-
-    During jump_active=1 the robot needs full ROM for push-off and tuck,
-    so the penalty is multiplied by jump_scale (default 0.0 = fully suppressed).
-    """
+    """Penalize joint position limit violations, suppressed during crouch/jump."""
     asset: Articulation = env.scene[asset_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    _, crouch_phase, jump_phase = _jump_phase_masks(jump_cmd)
 
     out_of_limits = -(
         asset.data.joint_pos[:, asset_cfg.joint_ids]
@@ -809,7 +812,8 @@ def conditional_joint_pos_limits(
     ).clamp(min=0.0)
     penalty = torch.sum(out_of_limits, dim=1)
 
-    scale = torch.where(jump_active > 0.5, jump_scale, 1.0)
+    phase_active = crouch_phase | jump_phase
+    scale = torch.where(phase_active, jump_scale, 1.0)
     return scale * penalty
 
 
@@ -821,14 +825,14 @@ def conditional_base_height(
     """Penalize base height deviation from target.
 
     When not jumping: target = commanded standing_height (cmd[:, 2]).
-    When jumping: target = commanded target_jump_height (cmd[:, 1]).
+    When crouching/jumping: target = commanded phase_target (cmd[:, 1]).
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
-    target_jump = jump_cmd[:, 1]
+    walk_phase, _, _ = _jump_phase_masks(jump_cmd)
+    phase_target = jump_cmd[:, 1]
     standing_h = jump_cmd[:, 2]
-    target = torch.where(jump_active > 0.5, target_jump, standing_h)
+    target = torch.where(walk_phase, standing_h, phase_target)
     return torch.abs(asset.data.root_pos_w[:, 2] - target)
 
 
@@ -838,17 +842,16 @@ def track_base_height_exp(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     sigma: float = 0.1,
 ) -> torch.Tensor:
-    """Track commanded standing_height using exp kernel. Only active when NOT jumping.
-
-    Tracks standing_height (cmd[:, 2]) when jump_active=0.
-    Returns 0 when jumping so it doesn't interfere with jump rewards.
-    """
+    """Track standing height in walk phase and crouch target in crouch phase."""
     asset: RigidObject = env.scene[asset_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    walk_phase, crouch_phase, _ = _jump_phase_masks(jump_cmd)
+    phase_target = jump_cmd[:, 1]
     standing_h = jump_cmd[:, 2]
-    error = asset.data.root_pos_w[:, 2] - standing_h
-    return (1.0 - jump_active) * torch.exp(-torch.square(error) / (sigma ** 2))
+    current_height = asset.data.root_pos_w[:, 2]
+    walk_reward = walk_phase.float() * torch.exp(-torch.square(current_height - standing_h) / (sigma ** 2))
+    crouch_reward = crouch_phase.float() * torch.exp(-torch.square(current_height - phase_target) / (sigma ** 2))
+    return walk_reward + crouch_reward
 
 
 def jump_upward_vel(
@@ -857,16 +860,16 @@ def jump_upward_vel(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
 ) -> torch.Tensor:
-    """Reward positive z velocity during jump when feet are still on ground (push-off phase).
+    """Reward positive z velocity during takeoff while feet are still on ground.
 
     This provides the gradient signal for the robot to learn to push off the ground.
-    Only active when jump_active=1 AND at least one foot still in contact.
+    Only active in jump phase and while at least one foot still has contact.
     Rewards clipped positive z velocity (negative vel = 0 reward).
     """
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    _, _, jump_phase = _jump_phase_masks(jump_cmd)
 
     # at least one foot on ground = push-off phase
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
@@ -875,7 +878,7 @@ def jump_upward_vel(
     vel_z = asset.data.root_lin_vel_w[:, 2]
     # only reward upward velocity, not penalize downward
     upward_vel = torch.clamp(vel_z, min=0.0)
-    return jump_active * on_ground.float() * upward_vel
+    return jump_phase.float() * on_ground.float() * upward_vel
 
 
 def jump_flight_vel_tracking(
@@ -888,7 +891,7 @@ def jump_flight_vel_tracking(
 ) -> torch.Tensor:
     """Track commanded xy velocity during flight phase.
 
-    Only active when jump_active=1 AND all feet are off the ground (in_flight).
+    Only active in jump phase and when all feet are off the ground.
     Uses exp kernel on the xy velocity error to encourage maintaining
     forward momentum while airborne.
     """
@@ -896,7 +899,7 @@ def jump_flight_vel_tracking(
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
     vel_cmd = env.command_manager.get_command(velocity_command_name)
-    jump_active = jump_cmd[:, 0]
+    _, _, jump_phase = _jump_phase_masks(jump_cmd)
 
     # in_flight = all feet off ground
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
@@ -908,7 +911,7 @@ def jump_flight_vel_tracking(
     )
     reward = torch.exp(-lin_vel_error / (std ** 2))
 
-    return jump_active * in_flight.float() * reward
+    return jump_phase.float() * in_flight.float() * reward
 
 
 def jump_height_reward(
@@ -918,10 +921,10 @@ def jump_height_reward(
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
     sigma: float = 0.1,
 ) -> torch.Tensor:
-    """Reward reaching the target jump height. Only active when jump_active=1.
+    """Reward reaching the target jump height during aerial jump phase.
 
     Uses an exponential kernel: exp(-error^2 / sigma^2).
-    Returns 0 when not jumping.
+    Returns 0 outside the jump phase.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
@@ -929,12 +932,12 @@ def jump_height_reward(
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
     in_flight = torch.all(forces_z < 1.0, dim=1)
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    _, _, jump_phase = _jump_phase_masks(jump_cmd)
     target_height = jump_cmd[:, 1]
     current_height = asset.data.root_pos_w[:, 2]
     height_error = current_height - target_height
     reward = torch.exp(-torch.square(height_error) / (sigma ** 2))
-    return jump_active * reward * in_flight.float()
+    return jump_phase.float() * reward * in_flight.float()
 
 
 def jump_landing_stability(
@@ -946,22 +949,21 @@ def jump_landing_stability(
 ) -> torch.Tensor:
     """Reward recovering to commanded standing height after jump ends.
 
-    When jump_active=0 and at least one foot is in contact, rewards the base
+    When back in walk phase and at least one foot is in contact, rewards the base
     height being close to the commanded standing_height (cmd[:, 2]).
     """
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    walk_phase, _, _ = _jump_phase_masks(jump_cmd)
     standing_h = jump_cmd[:, 2]
 
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
     any_contact = torch.any(forces_z > 1.0, dim=1)
 
-    not_jumping = jump_active < 0.5
     height_error = asset.data.root_pos_w[:, 2] - standing_h
     reward = torch.exp(-torch.square(height_error) / (sigma ** 2))
-    return not_jumping.float() * any_contact.float() * reward
+    return walk_phase.float() * any_contact.float() * reward
 
 
 def jump_tuck_legs(
@@ -974,7 +976,7 @@ def jump_tuck_legs(
 ) -> torch.Tensor:
     """Reward tucking legs to target joint angles during flight phase.
 
-    During aerial phase (jump_active=1 AND both feet off ground), rewards
+    During aerial jump phase, rewards
     hip and knee joints being close to specified tuck angles.
 
     Args:
@@ -992,7 +994,7 @@ def jump_tuck_legs(
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     jump_cmd = env.command_manager.get_command(command_name)
-    jump_active = jump_cmd[:, 0]
+    _, _, jump_phase = _jump_phase_masks(jump_cmd)
 
     # detect flight: both wheels off ground
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
@@ -1007,7 +1009,7 @@ def jump_tuck_legs(
 
     reward = torch.exp(-total_error / (sigma ** 2))
 
-    return jump_active * in_flight.float() * reward
+    return jump_phase.float() * in_flight.float() * reward
 
 
 def base_contact_penalty(

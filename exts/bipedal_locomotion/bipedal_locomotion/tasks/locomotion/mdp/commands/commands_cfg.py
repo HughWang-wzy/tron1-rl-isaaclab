@@ -99,6 +99,10 @@ class JumpCommandCfg(CommandTermCfg):
     """Range for the commanded standing base height [m]. Sampled every resample."""
     jump_delta_range: tuple[float, float] = (0.05, 0.2)
     """Range for the jump height delta above standing_height [m]."""
+    crouch_height: float = 0.7
+    """Target base height [m] for the pre-jump crouch phase."""
+    crouch_tolerance: float = 0.02
+    """Absolute height error tolerance [m] required to start takeoff."""
     jump_margin: float = 0.5
     """Extra time (seconds) added to ballistic flight time for crouch + landing."""
     resampling_time_range: tuple[float, float] = (3.0, 10.0)

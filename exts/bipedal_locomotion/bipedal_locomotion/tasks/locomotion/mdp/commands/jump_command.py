@@ -12,12 +12,12 @@ if TYPE_CHECKING:
 
 
 class JumpCommand(CommandTerm):
-    """Command generator that produces jump trigger, target height, and standing height.
+    """Command generator with explicit crouch and jump phases.
 
     Output shape: (num_envs, 3)
-        [0] jump_active:        0.0 (walk) or 1.0 (jump)
-        [1] target_jump_height: desired peak base height during jump (meters)
-        [2] standing_height:    commanded base height for normal locomotion (meters)
+        [0] phase_signal:       0.0 (walk), 0.5 (crouch), 1.0 (takeoff/flight)
+        [1] phase_target:       crouch target during crouch, jump peak target during jump
+        [2] standing_height:    commanded base height for normal locomotion / landing
 
     standing_height is always sampled (even when not jumping) so the robot
     learns to control its base height during normal walking.
@@ -33,14 +33,20 @@ class JumpCommand(CommandTerm):
     cfg: JumpCommandCfg
 
     GRAVITY: float = 9.81
+    WALK_PHASE: float = 0.0
+    CROUCH_PHASE: float = 0.5
+    JUMP_PHASE: float = 1.0
 
     def __init__(self, cfg: JumpCommandCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
 
-        # command buffer: [jump_active, target_jump_height, standing_height]
+        # command buffer: [phase_signal, phase_target, standing_height]
         self.jump_cmd = torch.zeros(self.num_envs, 3, device=self.device)
         mid = (cfg.standing_height_range[0] + cfg.standing_height_range[1]) / 2.0
         self.jump_cmd[:, 2] = mid
+
+        # stored peak target for the pending / active jump
+        self._pending_jump_target = torch.zeros(self.num_envs, device=self.device)
 
         # jump window countdown — used as max timeout safety net
         self._time_remaining = torch.zeros(self.num_envs, device=self.device)
@@ -74,6 +80,12 @@ class JumpCommand(CommandTerm):
     def command(self) -> torch.Tensor:
         """The jump command. Shape is (num_envs, 3)."""
         return self.jump_cmd
+
+    def _is_crouch_phase(self) -> torch.Tensor:
+        return (self.jump_cmd[:, 0] > 0.25) & (self.jump_cmd[:, 0] < 0.75)
+
+    def _is_jump_phase(self) -> torch.Tensor:
+        return self.jump_cmd[:, 0] >= 0.75
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -113,44 +125,65 @@ class JumpCommand(CommandTerm):
             )
             jump_standing = standing_h[jump_ids]
             target_h = jump_standing + delta
-            self.jump_cmd[env_ids[jump_ids], 0] = 1.0
-            self.jump_cmd[env_ids[jump_ids], 1] = target_h
-            self._time_remaining[env_ids[jump_ids]] = self._compute_jump_duration(jump_standing, target_h)
-            # start assist-force countdown
-            self._assist_remaining[env_ids[jump_ids]] = self.cfg.assist_force_duration
+            active_env_ids = env_ids[jump_ids]
+            self.jump_cmd[active_env_ids, 0] = self.CROUCH_PHASE
+            self.jump_cmd[active_env_ids, 1] = self.cfg.crouch_height
+            self._pending_jump_target[active_env_ids] = target_h
+            self._time_remaining[active_env_ids] = 0.0
+            self._assist_remaining[active_env_ids] = 0.0
+            self._prev_in_flight[active_env_ids] = False
 
         walk_ids = (~trigger_mask).nonzero(as_tuple=False).squeeze(-1)
         if walk_ids.numel() > 0:
-            self.jump_cmd[env_ids[walk_ids], 0] = 0.0
-            self.jump_cmd[env_ids[walk_ids], 1] = 0.0
-            self._time_remaining[env_ids[walk_ids]] = 0.0
-            self._assist_remaining[env_ids[walk_ids]] = 0.0
+            inactive_env_ids = env_ids[walk_ids]
+            self.jump_cmd[inactive_env_ids, 0] = self.WALK_PHASE
+            self.jump_cmd[inactive_env_ids, 1] = 0.0
+            self._pending_jump_target[inactive_env_ids] = 0.0
+            self._time_remaining[inactive_env_ids] = 0.0
+            self._assist_remaining[inactive_env_ids] = 0.0
+            self._prev_in_flight[inactive_env_ids] = False
 
     def _update_command(self):
-        """Countdown timers, detect landing via contact, and apply assist force."""
+        """Progress crouch -> jump -> landing and apply assist force after takeoff."""
         # --- contact-based landing detection ---
         forces_z = self._contact_sensor.data.net_forces_w[:, self._contact_body_ids, 2]
         in_flight = torch.all(forces_z < self.cfg.contact_force_threshold, dim=1)
         any_contact = torch.any(forces_z > self.cfg.contact_force_threshold, dim=1)
+        robot = self._env.scene["robot"]
+        current_height = robot.data.root_pos_w[:, 2]
 
         # landing = was in flight last step, now has contact
         landed = self._prev_in_flight & any_contact
         self._prev_in_flight = in_flight
-        
+
+        # --- crouch-to-takeoff transition ---
+        crouch_mask = self._is_crouch_phase()
+        if crouch_mask.any():
+            crouch_error = torch.abs(current_height - self.jump_cmd[:, 1])
+            crouch_ready = crouch_mask & any_contact & (crouch_error <= self.cfg.crouch_tolerance)
+            if crouch_ready.any():
+                self.jump_cmd[crouch_ready, 0] = self.JUMP_PHASE
+                self.jump_cmd[crouch_ready, 1] = self._pending_jump_target[crouch_ready]
+                self._time_remaining[crouch_ready] = self._compute_jump_duration(
+                    current_height[crouch_ready], self._pending_jump_target[crouch_ready]
+                )
+                self._assist_remaining[crouch_ready] = self.cfg.assist_force_duration
+
         # --- jump window countdown (max timeout safety net) ---
-        active_mask = self.jump_cmd[:, 0] > 0.5
+        active_mask = self._is_jump_phase()
         if active_mask.any():
             self._time_remaining[active_mask] -= self._env.step_dt
             expired = active_mask & ((self._time_remaining <= 0.0) | landed)
             self.jump_cmd[expired, 0] = 0.0
             self.jump_cmd[expired, 1] = 0.0
+            self._pending_jump_target[expired] = 0.0
             self._time_remaining[expired] = 0.0
+            self._assist_remaining[expired] = 0.0
 
         # --- assist force ---
         if self._assist_body_id is None:
             return
         assist_mask = self._assist_remaining > 0.0
-        robot = self._env.scene["robot"]
         robot.permanent_wrench_composer.reset()
 
         # forces shape: (num_envs, 1, 3) — only the base body
@@ -171,6 +204,8 @@ class JumpCommand(CommandTerm):
         msg = "JumpCommand:\n"
         msg += f"\tCommand dimension: {tuple(self.command.shape[1:])}\n"
         msg += f"\tJump probability: {self.cfg.jump_probability}\n"
+        msg += f"\tCrouch height: {self.cfg.crouch_height}\n"
+        msg += f"\tCrouch tolerance: {self.cfg.crouch_tolerance}\n"
         msg += f"\tJump delta range: {self.cfg.jump_delta_range}\n"
         msg += f"\tStanding height range: {self.cfg.standing_height_range}\n"
         msg += f"\tAssist force max: {self.cfg.assist_force_max} N\n"
