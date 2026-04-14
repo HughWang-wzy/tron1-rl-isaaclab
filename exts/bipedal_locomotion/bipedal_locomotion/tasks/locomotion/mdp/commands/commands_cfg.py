@@ -8,6 +8,7 @@ from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG, GREEN_ARROW_X_MARKE
 from isaaclab.utils import configclass
 
 from .active_group_velocity_command import ActiveGroupVelocityCommand
+from .discrete_velocity_command import DiscreteVelocityCommand
 from .gait_command import GaitCommand  # Import the GaitCommand class
 from .height_command import HeightCommand  # Import the HeightCommand class
 from .jump_command import JumpCommand  # Import the JumpCommand class
@@ -19,6 +20,21 @@ class UniformLevelVelocityCommandCfg(UniformVelocityCommandCfg):
 
     limit_ranges: UniformVelocityCommandCfg.Ranges = MISSING
     """Hard limits that the curriculum cannot exceed."""
+
+
+@configclass
+class DiscreteLevelVelocityCommandCfg(UniformLevelVelocityCommandCfg):
+    """Velocity command with discrete linear-x choices."""
+
+    class_type: type = DiscreteVelocityCommand
+
+    @configclass
+    class Ranges(UniformVelocityCommandCfg.Ranges):
+        lin_vel_x_choices: tuple[float, ...] = MISSING
+        """Discrete candidate values for the linear-x velocity command."""
+
+    ranges: Ranges = MISSING
+    """Distribution ranges for the velocity commands."""
 
 
 @configclass

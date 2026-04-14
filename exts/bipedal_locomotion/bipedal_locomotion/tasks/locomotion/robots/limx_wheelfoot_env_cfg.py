@@ -467,7 +467,14 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
         self.rewards.rew_lin_vel_xy = RewTerm(
             func=mdp.track_lin_vel_xy_exp_adaptive,
             weight=3.0,
-            params={"command_name": "base_velocity", "std": 0.3, "command_scale": 0.35},
+            params={
+                "command_name": "base_velocity",
+                "std": 0.3,
+                "command_scale": 0.35,
+                "progress_scale": 0.4,
+                "wrong_direction_scale": 0.5,
+                "direction_command_threshold": 0.5,
+            },
         )
         
         # -- feet contact state as privileged observation (critic only)
@@ -674,13 +681,34 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.terminations.base_contact = None
 
         # higher jump probability for demo
-        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
-        self.commands.base_jump.jump_probability = 0
+        self.commands.base_velocity = mdp.DiscreteLevelVelocityCommandCfg(
+            asset_name="robot",
+            heading_command=True,
+            heading_control_stiffness=1.0,
+            rel_standing_envs=0.02,
+            rel_heading_envs=1.0,
+            debug_vis=True,
+            resampling_time_range=(10.0, 10.0),
+            ranges=mdp.DiscreteLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-4.0, 4.0),
+                lin_vel_x_choices=(-2.5, -3.0, ),
+                lin_vel_y=(-0.0, 0.0),
+                ang_vel_z=(-0.5, 0.5),
+                heading=(-math.pi, math.pi),
+            ),
+            limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
+                lin_vel_x=(-4.0, 4.0),
+                lin_vel_y=(-0.0, 0.0),
+                ang_vel_z=(-math.pi, math.pi),
+                heading=(-math.pi, math.pi),
+            ),
+        )
+        self.commands.base_jump.jump_probability = 1
         self.commands.base_jump.resampling_time_range = (3.0, 3.0)
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
         self.curriculum = None
-        self.episode_length_s = 5
+        # self.episode_length_s = 5
 
 
 #############################

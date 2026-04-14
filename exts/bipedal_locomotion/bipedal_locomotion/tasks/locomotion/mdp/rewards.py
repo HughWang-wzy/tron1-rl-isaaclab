@@ -31,21 +31,44 @@ def track_lin_vel_xy_exp_adaptive(
     command_name: str,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     command_scale: float = 0.35,
+    progress_scale: float = 0.4,
+    wrong_direction_scale: float = 0.5,
+    direction_command_threshold: float = 0.5,
 ) -> torch.Tensor:
-    """Reward xy velocity tracking with a command-scaled tolerance.
+    """Reward xy velocity tracking with command scaling and direction awareness.
 
     Low-speed commands keep the original strict ``std``. For large commanded
     speeds, the tolerance grows with command magnitude so the reward does not
     collapse to near zero before the policy reaches high-speed tracking.
+
+    A progress bonus keeps the gradient informative even when far from the
+    target speed, while an opposite-direction penalty explicitly discourages
+    moving against the commanded direction.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     command = env.command_manager.get_command(command_name)[:, :2]
-    lin_vel_error = torch.sum(torch.square(command - asset.data.root_lin_vel_b[:, :2]), dim=1)
+    actual_vel = asset.data.root_lin_vel_b[:, :2]
+    lin_vel_error = torch.sum(torch.square(command - actual_vel), dim=1)
 
     command_speed = torch.norm(command, dim=1)
     adaptive_std = torch.maximum(torch.full_like(command_speed, std), command_scale * command_speed)
 
-    return torch.exp(-lin_vel_error / torch.square(adaptive_std.clamp_min(1e-6)))
+    tracking_reward = torch.exp(-lin_vel_error / torch.square(adaptive_std.clamp_min(1e-6)))
+
+    command_dir = torch.zeros_like(command)
+    valid_dir = command_speed > direction_command_threshold
+    command_dir[valid_dir] = command[valid_dir] / command_speed[valid_dir].unsqueeze(-1)
+    projected_speed = torch.sum(actual_vel * command_dir, dim=1)
+
+    progress_reward = torch.zeros_like(tracking_reward)
+    progress_reward[valid_dir] = torch.clamp(
+        projected_speed[valid_dir] / command_speed[valid_dir].clamp_min(1e-6), min=0.0, max=1.0
+    )
+
+    wrong_direction_penalty = torch.zeros_like(tracking_reward)
+    wrong_direction_penalty[valid_dir] = torch.clamp(-projected_speed[valid_dir], min=0.0, max=1.0)
+
+    return tracking_reward + progress_scale * progress_reward - wrong_direction_scale * wrong_direction_penalty
 
 def foot_landing_vel(
         env: ManagerBasedRLEnv,
