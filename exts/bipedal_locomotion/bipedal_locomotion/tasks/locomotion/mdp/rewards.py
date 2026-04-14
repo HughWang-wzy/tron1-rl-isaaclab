@@ -771,13 +771,24 @@ class ActionSmoothnessPenalty(ManagerTermBase):
 # ========================
 
 
-def _jump_phase_masks(jump_cmd: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Decode the staged jump command into walk / crouch / jump masks."""
-    phase_signal = jump_cmd[:, 0]
-    walk_phase = phase_signal < 0.25
-    crouch_phase = (phase_signal >= 0.25) & (phase_signal < 0.75)
-    jump_phase = phase_signal >= 0.75
-    return walk_phase, crouch_phase, jump_phase
+def _jump_phase_state(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return jump command plus walk/crouch/jump masks and crouch target."""
+    jump_cmd = env.command_manager.get_command(command_name)
+    jump_term = env.command_manager.get_term(command_name)
+
+    if hasattr(jump_term, "get_phase_masks"):
+        walk_phase, crouch_phase, jump_phase = jump_term.get_phase_masks()
+        crouch_target = torch.full_like(jump_cmd[:, 2], jump_term.cfg.crouch_height)
+    else:
+        walk_phase = jump_cmd[:, 0] < 0.5
+        crouch_phase = torch.zeros_like(walk_phase)
+        jump_phase = jump_cmd[:, 0] >= 0.5
+        crouch_target = jump_cmd[:, 2]
+
+    return jump_cmd, walk_phase, crouch_phase, jump_phase, crouch_target
 
 
 def conditional_lin_vel_z_l2(
@@ -787,8 +798,7 @@ def conditional_lin_vel_z_l2(
 ) -> torch.Tensor:
     """Penalize z-axis linear velocity only during normal walking."""
     asset: Articulation = env.scene[asset_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    walk_phase, _, _ = _jump_phase_masks(jump_cmd)
+    _, walk_phase, _, _, _ = _jump_phase_state(env, command_name)
     vel_z = asset.data.root_lin_vel_w[:, 2]
     return walk_phase.float() * torch.square(vel_z)
 
@@ -805,8 +815,7 @@ def conditional_flat_orientation_l2(
         jump_scale: multiplier on the penalty when crouching or jumping.
     """
     asset: Articulation = env.scene[asset_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    _, crouch_phase, jump_phase = _jump_phase_masks(jump_cmd)
+    _, _, crouch_phase, jump_phase, _ = _jump_phase_state(env, command_name)
     gravity_b = asset.data.projected_gravity_b
     penalty = torch.sum(torch.square(gravity_b[:, :2]), dim=1)
     phase_active = crouch_phase | jump_phase
@@ -822,8 +831,7 @@ def conditional_joint_pos_limits(
 ) -> torch.Tensor:
     """Penalize joint position limit violations, suppressed during crouch/jump."""
     asset: Articulation = env.scene[asset_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    _, crouch_phase, jump_phase = _jump_phase_masks(jump_cmd)
+    _, _, crouch_phase, jump_phase, _ = _jump_phase_state(env, command_name)
 
     out_of_limits = -(
         asset.data.joint_pos[:, asset_cfg.joint_ids]
@@ -851,9 +859,8 @@ def conditional_base_height(
     When crouching/jumping: target = commanded phase_target (cmd[:, 1]).
     """
     asset: RigidObject = env.scene[asset_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    walk_phase, _, _ = _jump_phase_masks(jump_cmd)
-    phase_target = jump_cmd[:, 1]
+    jump_cmd, walk_phase, crouch_phase, _, crouch_target = _jump_phase_state(env, command_name)
+    phase_target = torch.where(crouch_phase, crouch_target, jump_cmd[:, 1])
     standing_h = jump_cmd[:, 2]
     target = torch.where(walk_phase, standing_h, phase_target)
     return torch.abs(asset.data.root_pos_w[:, 2] - target)
@@ -867,14 +874,35 @@ def track_base_height_exp(
 ) -> torch.Tensor:
     """Track standing height in walk phase and crouch target in crouch phase."""
     asset: RigidObject = env.scene[asset_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    walk_phase, crouch_phase, _ = _jump_phase_masks(jump_cmd)
-    phase_target = jump_cmd[:, 1]
+    jump_cmd, walk_phase, crouch_phase, _, crouch_target = _jump_phase_state(env, command_name)
     standing_h = jump_cmd[:, 2]
     current_height = asset.data.root_pos_w[:, 2]
     walk_reward = walk_phase.float() * torch.exp(-torch.square(current_height - standing_h) / (sigma ** 2))
-    crouch_reward = crouch_phase.float() * torch.exp(-torch.square(current_height - phase_target) / (sigma ** 2))
+    crouch_reward = crouch_phase.float() * torch.exp(-torch.square(current_height - crouch_target) / (sigma ** 2))
     return walk_reward + crouch_reward
+
+
+def crouch_height_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_jump",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg | None = None,
+    sigma: float = 0.05,
+) -> torch.Tensor:
+    """Reward reaching the commanded crouch height while still in crouch phase."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    _, _, crouch_phase, _, crouch_target = _jump_phase_state(env, command_name)
+
+    current_height = asset.data.root_pos_w[:, 2]
+    reward = torch.exp(-torch.square(current_height - crouch_target) / (sigma ** 2))
+
+    if sensor_cfg is not None:
+        contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
+        on_ground = torch.any(forces_z > 1.0, dim=1)
+        reward = reward * on_ground.float()
+
+    return crouch_phase.float() * reward
 
 
 def jump_upward_vel(
@@ -891,8 +919,7 @@ def jump_upward_vel(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    _, _, jump_phase = _jump_phase_masks(jump_cmd)
+    _, _, _, jump_phase, _ = _jump_phase_state(env, command_name)
 
     # at least one foot on ground = push-off phase
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
@@ -920,9 +947,8 @@ def jump_flight_vel_tracking(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
+    _, _, _, jump_phase, _ = _jump_phase_state(env, command_name)
     vel_cmd = env.command_manager.get_command(velocity_command_name)
-    _, _, jump_phase = _jump_phase_masks(jump_cmd)
 
     # in_flight = all feet off ground
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
@@ -954,8 +980,7 @@ def jump_height_reward(
 
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
     in_flight = torch.all(forces_z < 1.0, dim=1)
-    jump_cmd = env.command_manager.get_command(command_name)
-    _, _, jump_phase = _jump_phase_masks(jump_cmd)
+    jump_cmd, _, _, jump_phase, _ = _jump_phase_state(env, command_name)
     target_height = jump_cmd[:, 1]
     current_height = asset.data.root_pos_w[:, 2]
     height_error = current_height - target_height
@@ -977,8 +1002,7 @@ def jump_landing_stability(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    walk_phase, _, _ = _jump_phase_masks(jump_cmd)
+    jump_cmd, walk_phase, _, _, _ = _jump_phase_state(env, command_name)
     standing_h = jump_cmd[:, 2]
 
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]
@@ -1016,8 +1040,7 @@ def jump_tuck_legs(
 
     asset: Articulation = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    jump_cmd = env.command_manager.get_command(command_name)
-    _, _, jump_phase = _jump_phase_masks(jump_cmd)
+    _, _, _, jump_phase, _ = _jump_phase_state(env, command_name)
 
     # detect flight: both wheels off ground
     forces_z = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2]

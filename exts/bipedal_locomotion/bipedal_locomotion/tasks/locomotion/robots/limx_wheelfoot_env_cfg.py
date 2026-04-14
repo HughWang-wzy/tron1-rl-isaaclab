@@ -432,7 +432,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             jump_probability=0.3,
             standing_height_range=(0.7, 0.9),
             jump_delta_range=(0.25, 0.5),
-            crouch_height=0.7,
+            crouch_height=0.65,
             crouch_tolerance=0.02,
             jump_margin=0.5,
             resampling_time_range=(3.0, 10.0),
@@ -501,6 +501,15 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             weight=2.5,
             params={"command_name": "base_jump", "sigma": 0.1},
         )
+        self.rewards.jump_crouch = RewTerm(
+            func=mdp.crouch_height_reward,
+            weight=2.0,
+            params={
+                "command_name": "base_jump",
+                "sigma": 0.05,
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
+            },
+        )
 
         # -- jump rewards
         self.rewards.jump_height = RewTerm(
@@ -537,7 +546,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                     "hip_R_Joint": -1.15,
                     "knee_R_Joint": -1.15,
                 },
-                "sigma": 0.25,
+                "sigma": 1,
             },
         )
         self.rewards.jump_landing = RewTerm(
@@ -691,7 +700,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
             resampling_time_range=(10.0, 10.0),
             ranges=mdp.DiscreteLevelVelocityCommandCfg.Ranges(
                 lin_vel_x=(-4.0, 4.0),
-                lin_vel_x_choices=(-2.5, -3.0, ),
+                lin_vel_x_choices=(2.5, 3.0, ),
                 lin_vel_y=(-0.0, 0.0),
                 ang_vel_z=(-0.5, 0.5),
                 heading=(-math.pi, math.pi),
@@ -707,6 +716,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.commands.base_jump.resampling_time_range = (3.0, 3.0)
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
+        self.commands.base_jump.jump_delta_range=(0.5, 0.5)
         self.curriculum = None
         # self.episode_length_s = 5
 
