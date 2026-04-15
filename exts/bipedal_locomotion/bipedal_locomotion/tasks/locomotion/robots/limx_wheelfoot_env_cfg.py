@@ -687,7 +687,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.events.push_robot = None
         # self.events.reset_fallen_robot = None
         self.events.add_base_mass = None
-        self.terminations.base_contact = None
+        # self.terminations.base_contact = None
 
         # higher jump probability for demo
         self.commands.base_velocity = mdp.DiscreteLevelVelocityCommandCfg(
@@ -700,7 +700,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
             resampling_time_range=(10.0, 10.0),
             ranges=mdp.DiscreteLevelVelocityCommandCfg.Ranges(
                 lin_vel_x=(-4.0, 4.0),
-                lin_vel_x_choices=(2.5, 3.0, ),
+                lin_vel_x_choices=(-2.5, -3.0, ),
                 lin_vel_y=(-0.0, 0.0),
                 ang_vel_z=(-0.5, 0.5),
                 heading=(-math.pi, math.pi),
@@ -713,7 +713,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
             ),
         )
         self.commands.base_jump.jump_probability = 1
-        self.commands.base_jump.resampling_time_range = (3.0, 3.0)
+        self.commands.base_jump.resampling_time_range = (5.0, 5.0)
         # no assist force during play
         self.commands.base_jump.assist_force_max = 0.0
         self.commands.base_jump.jump_delta_range=(0.5, 0.5)

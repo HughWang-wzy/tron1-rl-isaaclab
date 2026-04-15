@@ -44,6 +44,7 @@ class JumpCommand(CommandTerm):
 
         # internal staged state used only during training / simulation
         self._crouch_active = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self._crouch_time_left = torch.zeros(self.num_envs, device=self.device)
 
         # jump window countdown — used as max timeout safety net
         self._time_remaining = torch.zeros(self.num_envs, device=self.device)
@@ -76,6 +77,8 @@ class JumpCommand(CommandTerm):
     @property
     def command(self) -> torch.Tensor:
         """The jump command. Shape is (num_envs, 3)."""
+        print("JumpCommand.command called")
+        print(f"Jump command values (first 5 envs): {self.jump_cmd[:5]}")
         return self.jump_cmd
 
     def get_phase_masks(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -128,6 +131,7 @@ class JumpCommand(CommandTerm):
             self.jump_cmd[active_env_ids, 0] = 1.0
             self.jump_cmd[active_env_ids, 1] = target_h
             self._crouch_active[active_env_ids] = True
+            self._crouch_time_left[active_env_ids] = self.cfg.crouch_timeout
             self._time_remaining[active_env_ids] = 0.0
             self._assist_remaining[active_env_ids] = 0.0
             self._prev_in_flight[active_env_ids] = False
@@ -138,6 +142,7 @@ class JumpCommand(CommandTerm):
             self.jump_cmd[inactive_env_ids, 0] = 0.0
             self.jump_cmd[inactive_env_ids, 1] = 0.0
             self._crouch_active[inactive_env_ids] = False
+            self._crouch_time_left[inactive_env_ids] = 0.0
             self._time_remaining[inactive_env_ids] = 0.0
             self._assist_remaining[inactive_env_ids] = 0.0
             self._prev_in_flight[inactive_env_ids] = False
@@ -158,23 +163,31 @@ class JumpCommand(CommandTerm):
         # --- crouch-to-takeoff transition ---
         crouch_mask = (self.jump_cmd[:, 0] > 0.5) & self._crouch_active
         if crouch_mask.any():
+            self._crouch_time_left[crouch_mask] -= self._env.step_dt
             crouch_error = torch.abs(current_height - self.cfg.crouch_height)
             crouch_ready = crouch_mask & any_contact & (crouch_error <= self.cfg.crouch_tolerance)
             if crouch_ready.any():
                 self._crouch_active[crouch_ready] = False
+                self._crouch_time_left[crouch_ready] = 0.0
                 self._time_remaining[crouch_ready] = self._compute_jump_duration(
                     current_height[crouch_ready], self.jump_cmd[crouch_ready, 1]
                 )
                 self._assist_remaining[crouch_ready] = self.cfg.assist_force_duration
 
-        # --- jump window countdown (max timeout safety net) ---
-        active_mask = (self.jump_cmd[:, 0] > 0.5) & (~self._crouch_active)
+        # --- active jump lifecycle countdown / reset ---
+        active_mask = self.jump_cmd[:, 0] > 0.5
+        jump_phase_mask = active_mask & (~self._crouch_active)
+        if jump_phase_mask.any():
+            self._time_remaining[jump_phase_mask] -= self._env.step_dt
+
         if active_mask.any():
-            self._time_remaining[active_mask] -= self._env.step_dt
-            expired = active_mask & ((self._time_remaining <= 0.0) | landed)
+            crouch_expired = active_mask & self._crouch_active & (self._crouch_time_left <= 0.0)
+            jump_expired = jump_phase_mask & ((self._time_remaining <= 0.0) | landed)
+            expired = crouch_expired | jump_expired
             self.jump_cmd[expired, 0] = 0.0
             self.jump_cmd[expired, 1] = 0.0
             self._crouch_active[expired] = False
+            self._crouch_time_left[expired] = 0.0
             self._time_remaining[expired] = 0.0
             self._assist_remaining[expired] = 0.0
 

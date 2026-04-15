@@ -119,6 +119,8 @@ class JumpCommandCfg(CommandTermCfg):
     """Target base height [m] for the pre-jump crouch phase."""
     crouch_tolerance: float = 0.02
     """Absolute height error tolerance [m] required to start takeoff."""
+    crouch_timeout: float = 1.0
+    """Maximum time [s] allowed for the crouch stage before aborting the jump."""
     jump_margin: float = 0.5
     """Extra time (seconds) added to ballistic flight time for crouch + landing."""
     resampling_time_range: tuple[float, float] = (3.0, 10.0)
