@@ -443,8 +443,8 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "probability": 0.02,
                 "base_height_range": (0.22, 0.34),
-                "pitch_range": (1.35, 1.75),
-                "roll_range": (1.35, 1.75),
+                "pitch_range": (-1.57, 1.57),
+                "roll_range": (-1.57, 1.57),
                 "yaw_range": (-math.pi, math.pi),
                 "xy_range": (-0.20, 0.20),
                 "velocity_range": {
@@ -470,10 +470,10 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "command_name": "base_velocity",
                 "std": 0.3,
-                "command_scale": 0.35,
+               "command_scale": 0.4,
                 "progress_scale": 0.4,
-                "wrong_direction_scale": 0.5,
-                "direction_command_threshold": 0.5,
+                "wrong_direction_scale": 1.5,
+                "direction_command_threshold": 1.5,
             },
         )
         
@@ -549,15 +549,7 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
                 "sigma": 1,
             },
         )
-        self.rewards.jump_landing = RewTerm(
-            func=mdp.jump_landing_stability,
-            weight=8.0,
-            params={
-                "command_name": "base_jump",
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="wheel_.*"),
-                "sigma": 0.15,
-            },
-        )
+        self.rewards.jump_landing = None
         self.rewards.pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.03)
         self.rewards.pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.005)
         # self.rewards.pen_feet_distance = None
@@ -628,9 +620,9 @@ class WFJumpFlatEnvCfg(WFBaseEnvCfg):
             params={
                 "term_name": "reset_fallen_robot",
                 "start_prob": 0.02,
-                "end_prob": 0.2,
-                "start_iteration": 2000,
-                "end_iteration": 7000,
+                "end_prob": 0.4,
+                "start_iteration": 1000,
+                "end_iteration": 4000,
                 "num_steps_per_env": 24,
             },
         )
@@ -685,9 +677,30 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.scene.num_envs = 32
         self.observations.policy.enable_corruption = False
         self.events.push_robot = None
+        self.events.reset_fallen_robot = EventTerm(
+            func=mdp.reset_robot_fallen_state,
+            mode="reset",
+            params={
+                "probability": 1,
+                "base_height_range": (0.22, 0.34),
+                "pitch_range": (-1.57, 1.57),
+                "roll_range": (-1.57, 1.57),
+                "yaw_range": (-math.pi, math.pi),
+                "xy_range": (-0.20, 0.20),
+                "velocity_range": {
+                    "x": (-0.2, 0.2),
+                    "y": (-0.2, 0.2),
+                    "z": (-0.1, 0.1),
+                    "roll": (-0.2, 0.2),
+                    "pitch": (-0.2, 0.2),
+                    "yaw": (-0.2, 0.2),
+                },
+                "joint_position_noise_range": (-0.04, 0.04),
+            },
+        )
         # self.events.reset_fallen_robot = None
         self.events.add_base_mass = None
-        # self.terminations.base_contact = None
+        self.terminations.base_contact = None
 
         # higher jump probability for demo
         self.commands.base_velocity = mdp.DiscreteLevelVelocityCommandCfg(
@@ -700,7 +713,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
             resampling_time_range=(10.0, 10.0),
             ranges=mdp.DiscreteLevelVelocityCommandCfg.Ranges(
                 lin_vel_x=(-4.0, 4.0),
-                lin_vel_x_choices=(-2.5, -3.0, ),
+                lin_vel_x_choices=(-4.0, -3.0),
                 lin_vel_y=(-0.0, 0.0),
                 ang_vel_z=(-0.5, 0.5),
                 heading=(-math.pi, math.pi),
@@ -718,7 +731,7 @@ class WFJumpFlatEnvCfg_PLAY(WFJumpFlatEnvCfg):
         self.commands.base_jump.assist_force_max = 0.0
         self.commands.base_jump.jump_delta_range=(0.5, 0.5)
         self.curriculum = None
-        # self.episode_length_s = 5
+        self.episode_length_s = 10
 
 
 #############################

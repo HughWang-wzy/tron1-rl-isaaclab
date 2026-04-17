@@ -87,6 +87,7 @@ class MultiExpertDistillationRunner:
 
         for it in range(start_it, tot_iter):
             start = time.time()
+            rollout_schedule_info = self.alg.prepare_rollout(obs)
 
             # --- Rollout phase ---
             with torch.inference_mode():
@@ -160,6 +161,33 @@ class MultiExpertDistillationRunner:
 
         self.writer.add_scalar("Loss/behavior", behavior_loss, locs["it"])
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
+        self.writer.add_scalar(
+            "Rollout/teacher_probability",
+            float(locs["rollout_schedule_info"]["teacher_rollout_prob"]),
+            locs["it"],
+        )
+        self.writer.add_scalar(
+            "Rollout/teacher_ratio",
+            float(locs["rollout_schedule_info"]["teacher_rollout_ratio"]),
+            locs["it"],
+        )
+        self.writer.add_scalar(
+            "Rollout/source_is_teacher",
+            1.0 if locs["rollout_schedule_info"]["rollout_action_source"] == "teacher" else 0.0,
+            locs["it"],
+        )
+        self.writer.add_scalar(
+            "Error/overall",
+            loss_dict.get("error", behavior_loss),
+            locs["it"],
+        )
+        for metric_name in (
+            "error_jump_teacher_rollout",
+            "error_jump_student_rollout",
+            "error_gait_teacher_rollout",
+            "error_gait_student_rollout",
+        ):
+            self.writer.add_scalar(f"Error/{metric_name}", loss_dict.get(metric_name, 0.0), locs["it"])
         # Log per-expert losses
         for key, value in loss_dict.items():
             if key.startswith("behavior_"):
@@ -181,6 +209,13 @@ class MultiExpertDistillationRunner:
             if key.startswith("behavior_"):
                 expert_name = key[len("behavior_"):]
                 expert_loss_string += f"""{f'Loss [{expert_name}]:':>{pad}} {value:.4f}\n"""
+        error_string = (
+            f"""{f'Error overall:':>{pad}} {loss_dict.get('error', behavior_loss):.4f}\n"""
+            f"""{f'Error [jump teacher rollout]:':>{pad}} {loss_dict.get('error_jump_teacher_rollout', 0.0):.4f}\n"""
+            f"""{f'Error [jump student rollout]:':>{pad}} {loss_dict.get('error_jump_student_rollout', 0.0):.4f}\n"""
+            f"""{f'Error [gait teacher rollout]:':>{pad}} {loss_dict.get('error_gait_teacher_rollout', 0.0):.4f}\n"""
+            f"""{f'Error [gait student rollout]:':>{pad}} {loss_dict.get('error_gait_student_rollout', 0.0):.4f}\n"""
+        )
 
         str_header = (
             f" \033[1m Learning iteration {locs['it']}/{self.current_learning_iteration + locs['num_learning_iterations']} \033[0m "
@@ -193,6 +228,10 @@ class MultiExpertDistillationRunner:
                 f"""(collection: {locs['collection_time']:.3f}s, learning: {locs['learn_time']:.3f}s)\n"""
                 f"""{'Behavior loss:':>{pad}} {behavior_loss:.4f}\n"""
                 f"""{'Learning rate:':>{pad}} {self.alg.learning_rate:.6f}\n"""
+                f"""{'Rollout source:':>{pad}} {locs['rollout_schedule_info']['rollout_action_source']}\n"""
+                f"""{'Teacher rollout prob:':>{pad}} {locs['rollout_schedule_info']['teacher_rollout_prob']:.3f}\n"""
+                f"""{'Teacher rollout ratio:':>{pad}} {locs['rollout_schedule_info']['teacher_rollout_ratio']:.3f}\n"""
+                f"""{error_string}"""
                 f"""{expert_loss_string}"""
                 f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                 f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
@@ -205,6 +244,10 @@ class MultiExpertDistillationRunner:
                 f"""(collection: {locs['collection_time']:.3f}s, learning: {locs['learn_time']:.3f}s)\n"""
                 f"""{'Behavior loss:':>{pad}} {behavior_loss:.4f}\n"""
                 f"""{'Learning rate:':>{pad}} {self.alg.learning_rate:.6f}\n"""
+                f"""{'Rollout source:':>{pad}} {locs['rollout_schedule_info']['rollout_action_source']}\n"""
+                f"""{'Teacher rollout prob:':>{pad}} {locs['rollout_schedule_info']['teacher_rollout_prob']:.3f}\n"""
+                f"""{'Teacher rollout ratio:':>{pad}} {locs['rollout_schedule_info']['teacher_rollout_ratio']:.3f}\n"""
+                f"""{error_string}"""
                 f"""{expert_loss_string}"""
             )
 

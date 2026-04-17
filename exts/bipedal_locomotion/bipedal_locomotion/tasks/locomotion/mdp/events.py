@@ -275,6 +275,41 @@ def reset_robot_fallen_state_for_env_group(
     )
 
 
+def apply_external_force_torque_stochastic_additional_for_env_group(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    force_range: dict[str, tuple[float, float]],
+    torque_range: dict[str, tuple[float, float]],
+    probability: float,
+    target_group: int,
+    num_groups: int,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Apply stochastic additional pushes only to the specified expert group."""
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+    if len(env_ids) == 0 or probability <= 0.0:
+        return
+    if target_group < 0 or target_group >= num_groups:
+        raise ValueError(f"target_group must be within [0, {num_groups - 1}], got {target_group}.")
+
+    env_group_ids = env_ids * num_groups // env.num_envs
+    grouped_env_ids = env_ids[env_group_ids == target_group]
+    if len(grouped_env_ids) == 0:
+        return
+
+    apply_external_force_torque_stochastic_additional(
+        env=env,
+        env_ids=grouped_env_ids,
+        force_range=force_range,
+        torque_range=torque_range,
+        probability=probability,
+        asset_cfg=asset_cfg,
+    )
+
+
 def randomize_rigid_body_mass_inertia(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor | None,

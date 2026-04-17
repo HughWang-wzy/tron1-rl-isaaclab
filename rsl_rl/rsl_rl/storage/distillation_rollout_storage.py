@@ -27,6 +27,7 @@ class DistillationRolloutStorage:
             self.observations: TensorDict | None = None
             self.actions: torch.Tensor | None = None
             self.privileged_actions: torch.Tensor | None = None
+            self.rollout_teacher_mask: torch.Tensor | None = None
             self.rewards: torch.Tensor | None = None
             self.dones: torch.Tensor | None = None
             self.values: torch.Tensor | None = None
@@ -48,10 +49,12 @@ class DistillationRolloutStorage:
             self,
             observations: TensorDict | None = None,
             privileged_actions: torch.Tensor | None = None,
+            rollout_teacher_mask: torch.Tensor | None = None,
             dones: torch.Tensor | None = None,
         ) -> None:
             self.observations = observations
             self.privileged_actions = privileged_actions
+            self.rollout_teacher_mask = rollout_teacher_mask
             self.dones = dones
 
     def __init__(
@@ -84,6 +87,9 @@ class DistillationRolloutStorage:
             self.privileged_actions = torch.zeros(
                 num_transitions_per_env, num_envs, *actions_shape, device=self.device
             )
+            self.rollout_teacher_mask = torch.zeros(
+                num_transitions_per_env, num_envs, 1, device=self.device, dtype=torch.bool
+            )
 
         # For reinforcement learning (kept for compatibility)
         if training_type == "rl":
@@ -111,6 +117,7 @@ class DistillationRolloutStorage:
 
         if self.training_type == "distillation":
             self.privileged_actions[self.step].copy_(transition.privileged_actions)
+            self.rollout_teacher_mask[self.step].copy_(transition.rollout_teacher_mask.view(-1, 1).to(dtype=torch.bool))
 
         if self.training_type == "rl":
             self.values[self.step].copy_(transition.values)
@@ -153,6 +160,7 @@ class DistillationRolloutStorage:
             yield DistillationRolloutStorage.Batch(
                 observations=self.observations[i],
                 privileged_actions=self.privileged_actions[i],
+                rollout_teacher_mask=self.rollout_teacher_mask[i],
                 dones=self.dones[i],
             )
 

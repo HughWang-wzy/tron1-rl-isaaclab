@@ -63,7 +63,7 @@ WF_MultiExpertDistillationCfg: dict = {
         "class_name": "MultiExpertDistillation",
         "num_learning_epochs": 4,
         "gradient_length": 12,
-        "learning_rate": 5e-3,
+        "learning_rate": 1e-3,
         "lr_schedule": "reduce_on_plateau",
         "lr_schedule_factor": 0.5,
         "lr_schedule_patience": 150,
@@ -72,7 +72,14 @@ WF_MultiExpertDistillationCfg: dict = {
         "loss_type": "mse",
         "max_grad_norm": 1.0,
         "optimizer": "adam",
-        "rollout_action_source": "student",  # "teacher" or "student"
+        "rollout_action_source": "student",  # fallback when no schedule is configured
+        "rollout_action_source_schedule": {
+            "mode": "linear_teacher_prob",
+            "start_update": 0,
+            "end_update": 3000,
+            "teacher_prob_start": 1.0,
+            "teacher_prob_end": 0.0,
+        },
     },
     "obs_groups": {
         "student": ["obsHistory_flat", "policy", "commands", "jump_commands", "gait_commands", "env_group"],
@@ -89,7 +96,7 @@ WF_MultiExpertDistillationCfg: dict = {
             "obs_groups": ["obsHistory_flat", "policy", "commands", "gait_commands"],
             "jit_policy_path": _GAIT_JIT_PATH,
             "action_scale": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0],
-        },
+        },re
     ],
     "teacher_id_obs_group": "env_group",
     "num_steps_per_env": 24,

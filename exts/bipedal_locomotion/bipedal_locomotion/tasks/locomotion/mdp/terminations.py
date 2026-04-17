@@ -84,6 +84,43 @@ def base_contact_and_bad_orientation_after_grace(
     return fallen & (counter >= grace_steps)
 
 
+def mixed_base_contact_termination_for_env_group(
+    env: ManagerBasedRLEnv,
+    jump_sensor_cfg: SceneEntityCfg,
+    limit_angle: float,
+    threshold: float = 1.0,
+    grace_steps: int = 30,
+    target_group: int = 0,
+    num_groups: int = 2,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    gait_sensor_cfg: SceneEntityCfg | None = None,
+) -> torch.Tensor:
+    """Use jump-style grace termination for one expert group and illegal-contact for the others."""
+    group_ids = torch.arange(env.num_envs, device=env.device) * num_groups // env.num_envs
+    jump_group_mask = group_ids == target_group
+
+    jump_done = base_contact_and_bad_orientation_after_grace(
+        env=env,
+        sensor_cfg=jump_sensor_cfg,
+        limit_angle=limit_angle,
+        threshold=threshold,
+        grace_steps=grace_steps,
+        asset_cfg=asset_cfg,
+    )
+
+    if gait_sensor_cfg is None:
+        gait_sensor_cfg = jump_sensor_cfg
+
+    contact_sensor: ContactSensor = env.scene.sensors[gait_sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    illegal_contact = torch.any(
+        torch.max(torch.norm(net_contact_forces[:, :, gait_sensor_cfg.body_ids], dim=-1), dim=1)[0] > threshold,
+        dim=1,
+    )
+
+    return torch.where(jump_group_mask, jump_done, illegal_contact)
+
+
 def base_height_below_minimum(
     env: ManagerBasedRLEnv,
     minimum_height: float,

@@ -94,6 +94,7 @@ class MultiExpertDistillation:
         loss_type: str = "mse",
         optimizer: str = "adam",
         rollout_action_source: str = "student",
+        rollout_action_source_schedule: dict | None = None,
         device: str = "cpu",
         multi_gpu_cfg: dict | None = None,
         **kwargs,
@@ -106,6 +107,7 @@ class MultiExpertDistillation:
         self.is_multi_gpu = multi_gpu_cfg is not None
         self.num_actions = int(env.num_actions)
         self.rollout_action_source = rollout_action_source
+        self.rollout_action_source_schedule = rollout_action_source_schedule
 
         if len(teachers) == 0:
             raise ValueError("MultiExpertDistillation requires at least one teacher.")
@@ -125,6 +127,7 @@ class MultiExpertDistillation:
                 "rollout_action_source must be either 'student' or 'teacher', "
                 f"got '{self.rollout_action_source}'."
             )
+        self._validate_rollout_action_source_schedule()
 
         if multi_gpu_cfg is not None:
             self.gpu_global_rank = multi_gpu_cfg["global_rank"]
@@ -175,6 +178,127 @@ class MultiExpertDistillation:
 
         self.num_updates = 0
         self.teacher_loaded = True
+        self.current_rollout_action_source = self.rollout_action_source
+        self.current_teacher_rollout_prob = 1.0 if self.rollout_action_source == "teacher" else 0.0
+        self.current_rollout_teacher_mask: torch.Tensor | None = None
+        self.current_rollout_teacher_ratio = self.current_teacher_rollout_prob
+        self.prepare_rollout()
+
+    def _validate_rollout_action_source_schedule(self) -> None:
+        """Validate optional rollout action source curriculum."""
+        if self.rollout_action_source_schedule is None:
+            return
+        if not isinstance(self.rollout_action_source_schedule, dict):
+            raise TypeError(
+                "rollout_action_source_schedule must be a dict when provided, "
+                f"got {type(self.rollout_action_source_schedule).__name__}."
+            )
+
+        mode = str(self.rollout_action_source_schedule.get("mode", "linear_teacher_prob"))
+        if mode not in {"linear_teacher_prob", "switch_teacher_to_student"}:
+            raise ValueError(
+                "rollout_action_source_schedule.mode must be one of "
+                "['linear_teacher_prob', 'switch_teacher_to_student'], "
+                f"got '{mode}'."
+            )
+
+        if mode == "linear_teacher_prob":
+            start_update = int(self.rollout_action_source_schedule.get("start_update", 0))
+            end_update = int(self.rollout_action_source_schedule.get("end_update", start_update))
+            if end_update < start_update:
+                raise ValueError(
+                    "rollout_action_source_schedule.end_update must be >= start_update, "
+                    f"got start_update={start_update}, end_update={end_update}."
+                )
+            for key, default in (("teacher_prob_start", 1.0), ("teacher_prob_end", 0.0)):
+                value = float(self.rollout_action_source_schedule.get(key, default))
+                if not 0.0 <= value <= 1.0:
+                    raise ValueError(f"{key} must be within [0, 1], got {value}.")
+        else:
+            switch_update = int(self.rollout_action_source_schedule.get("switch_update", 0))
+            if switch_update < 0:
+                raise ValueError(f"rollout_action_source_schedule.switch_update must be >= 0, got {switch_update}.")
+
+    def _teacher_rollout_prob_for_update(self, update_idx: int) -> float:
+        """Return teacher rollout probability for the current update."""
+        if self.rollout_action_source_schedule is None:
+            return 1.0 if self.rollout_action_source == "teacher" else 0.0
+
+        mode = str(self.rollout_action_source_schedule.get("mode", "linear_teacher_prob"))
+        if mode == "switch_teacher_to_student":
+            switch_update = int(self.rollout_action_source_schedule.get("switch_update", 0))
+            return 1.0 if update_idx < switch_update else 0.0
+
+        start_update = int(self.rollout_action_source_schedule.get("start_update", 0))
+        end_update = int(self.rollout_action_source_schedule.get("end_update", start_update))
+        prob_start = float(self.rollout_action_source_schedule.get("teacher_prob_start", 1.0))
+        prob_end = float(self.rollout_action_source_schedule.get("teacher_prob_end", 0.0))
+
+        if update_idx <= start_update:
+            return prob_start
+        if update_idx >= end_update:
+            return prob_end
+        if end_update == start_update:
+            return prob_end
+
+        alpha = (update_idx - start_update) / float(end_update - start_update)
+        return prob_start + alpha * (prob_end - prob_start)
+
+    def _sample_rollout_teacher_mask(self, teacher_ids: torch.Tensor) -> torch.Tensor:
+        """Sample a fixed teacher-rollout env mask for the current rollout iteration."""
+        teacher_prob = self.current_teacher_rollout_prob
+        mask = torch.zeros_like(teacher_ids, dtype=torch.bool, device=self.device)
+
+        if teacher_prob >= 1.0 - 1e-6:
+            mask[:] = True
+            return mask
+        if teacher_prob <= 1e-6:
+            return mask
+
+        unique_teacher_ids = torch.unique(teacher_ids)
+        for teacher_id in unique_teacher_ids.tolist():
+            env_ids = torch.nonzero(teacher_ids == teacher_id, as_tuple=False).squeeze(-1)
+            if env_ids.numel() == 0:
+                continue
+            num_teacher_envs = int(round(float(env_ids.numel()) * teacher_prob))
+            if num_teacher_envs <= 0:
+                continue
+            if num_teacher_envs >= env_ids.numel():
+                mask[env_ids] = True
+                continue
+            perm = torch.randperm(env_ids.numel(), device=self.device)
+            chosen = env_ids[perm[:num_teacher_envs]]
+            mask[chosen] = True
+        return mask
+
+    def prepare_rollout(self, obs: TensorDict | None = None) -> dict[str, float | str]:
+        """Choose per-env rollout action source mask for the next rollout iteration."""
+        teacher_prob = float(self._teacher_rollout_prob_for_update(self.num_updates))
+        teacher_prob = max(0.0, min(1.0, teacher_prob))
+        self.current_teacher_rollout_prob = teacher_prob
+
+        if obs is None:
+            self.current_rollout_teacher_mask = None
+            self.current_rollout_teacher_ratio = teacher_prob
+        else:
+            teacher_ids = self._resolve_teacher_ids(obs)
+            self.current_rollout_teacher_mask = self._sample_rollout_teacher_mask(teacher_ids)
+            self.current_rollout_teacher_ratio = float(
+                self.current_rollout_teacher_mask.float().mean().item()
+            )
+
+        if self.current_rollout_teacher_ratio >= 1.0 - 1e-6:
+            self.current_rollout_action_source = "teacher"
+        elif self.current_rollout_teacher_ratio <= 1e-6:
+            self.current_rollout_action_source = "student"
+        else:
+            self.current_rollout_action_source = "mixed"
+
+        return {
+            "rollout_action_source": self.current_rollout_action_source,
+            "teacher_rollout_prob": self.current_teacher_rollout_prob,
+            "teacher_rollout_ratio": self.current_rollout_teacher_ratio,
+        }
 
     def _build_expert_action_scale_tensor(self, expert_action_scales: list[float | list[float]]) -> torch.Tensor:
         """Normalize scalar/vector per-expert action scales into shape [num_experts, num_actions]."""
@@ -378,10 +502,23 @@ class MultiExpertDistillation:
             teacher_actions_all[env_ids] = teacher_actions * scale
 
         self.transition.privileged_actions = teacher_actions_all
-        if self.rollout_action_source == "teacher":
-            self.transition.actions = teacher_actions_all
-        else:
-            self.transition.actions = student_actions
+        if self.current_rollout_teacher_mask is None or self.current_rollout_teacher_mask.shape[0] != self.env.num_envs:
+            self.current_rollout_teacher_mask = self._sample_rollout_teacher_mask(teacher_ids)
+            self.current_rollout_teacher_ratio = float(self.current_rollout_teacher_mask.float().mean().item())
+            if self.current_rollout_teacher_ratio >= 1.0 - 1e-6:
+                self.current_rollout_action_source = "teacher"
+            elif self.current_rollout_teacher_ratio <= 1e-6:
+                self.current_rollout_action_source = "student"
+            else:
+                self.current_rollout_action_source = "mixed"
+
+        rollout_teacher_mask = self.current_rollout_teacher_mask
+        self.transition.rollout_teacher_mask = rollout_teacher_mask
+        self.transition.actions = torch.where(
+            rollout_teacher_mask.unsqueeze(-1),
+            teacher_actions_all,
+            student_actions,
+        )
 
         return self.transition.actions
 
@@ -411,6 +548,12 @@ class MultiExpertDistillation:
 
         group_loss_totals = {name: 0.0 for name in self.expert_names}
         group_loss_denominators = {name: 0 for name in self.expert_names}
+        subgroup_loss_totals = {
+            (name, source): 0.0 for name in self.expert_names for source in ("teacher_rollout", "student_rollout")
+        }
+        subgroup_loss_denominators = {
+            (name, source): 0 for name in self.expert_names for source in ("teacher_rollout", "student_rollout")
+        }
 
         for _epoch in range(self.num_learning_epochs):
             self.student.reset(hidden_state=self.last_hidden_state)
@@ -433,11 +576,24 @@ class MultiExpertDistillation:
                     teacher_ids = torch.zeros(per_env_loss.shape[0], dtype=torch.long, device=self.device)
                 else:
                     teacher_ids = self._decode_teacher_ids(batch.observations[self.teacher_id_obs_group])
+                rollout_teacher_mask = (
+                    batch.rollout_teacher_mask.view(-1).to(dtype=torch.bool, device=self.device)
+                    if batch.rollout_teacher_mask is not None
+                    else torch.zeros(per_env_loss.shape[0], dtype=torch.bool, device=self.device)
+                )
                 for teacher_id, expert_name in enumerate(self.expert_names):
                     mask = teacher_ids == teacher_id
                     if torch.any(mask):
                         group_loss_totals[expert_name] += per_env_loss[mask].sum().item()
                         group_loss_denominators[expert_name] += int(mask.sum().item())
+                    teacher_mask = mask & rollout_teacher_mask
+                    student_mask = mask & (~rollout_teacher_mask)
+                    if torch.any(teacher_mask):
+                        subgroup_loss_totals[(expert_name, "teacher_rollout")] += per_env_loss[teacher_mask].sum().item()
+                        subgroup_loss_denominators[(expert_name, "teacher_rollout")] += int(teacher_mask.sum().item())
+                    if torch.any(student_mask):
+                        subgroup_loss_totals[(expert_name, "student_rollout")] += per_env_loss[student_mask].sum().item()
+                        subgroup_loss_denominators[(expert_name, "student_rollout")] += int(student_mask.sum().item())
 
                 if num_batches % self.gradient_length == 0:
                     self.optimizer.zero_grad()
@@ -462,12 +618,19 @@ class MultiExpertDistillation:
         self.last_hidden_state = self.student.get_hidden_state()
         self.student.detach_hidden_state()
 
-        loss_dict: dict[str, float] = {"behavior": mean_behavior_loss}
+        loss_dict: dict[str, float] = {"behavior": mean_behavior_loss, "error": mean_behavior_loss}
         for expert_name in self.expert_names:
             denominator = group_loss_denominators[expert_name]
             loss_dict[f"behavior_{expert_name}"] = (
                 group_loss_totals[expert_name] / denominator if denominator > 0 else 0.0
             )
+            short_name = expert_name.removesuffix("_expert")
+            for source in ("teacher_rollout", "student_rollout"):
+                denominator = subgroup_loss_denominators[(expert_name, source)]
+                metric_name = f"error_{short_name}_{source}"
+                loss_dict[metric_name] = (
+                    subgroup_loss_totals[(expert_name, source)] / denominator if denominator > 0 else 0.0
+                )
         return loss_dict
 
     def train_mode(self) -> None:
@@ -489,6 +652,7 @@ class MultiExpertDistillation:
             "lr_scheduler_state_dict": self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None,
             "expert_names": self.expert_names,
             "expert_action_scales": self.expert_action_scales.detach().cpu().tolist(),
+            "num_updates": self.num_updates,
         }
 
     def load(self, loaded_dict: dict, load_cfg: dict | None, strict: bool) -> bool:
@@ -512,6 +676,9 @@ class MultiExpertDistillation:
             and loaded_dict.get("lr_scheduler_state_dict") is not None
         ):
             self.lr_scheduler.load_state_dict(loaded_dict["lr_scheduler_state_dict"])
+        if "num_updates" in loaded_dict:
+            self.num_updates = int(loaded_dict["num_updates"])
+            self.prepare_rollout()
         return load_cfg.get("iteration", False)
 
     def get_policy(self) -> MLPModel:

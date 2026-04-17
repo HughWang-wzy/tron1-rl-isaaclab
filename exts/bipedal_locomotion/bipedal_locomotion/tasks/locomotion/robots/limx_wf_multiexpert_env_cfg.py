@@ -88,12 +88,12 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             func=mdp.reset_robot_fallen_state_for_env_group,
             mode="reset",
             params={
-                "probability": 0.03,
+                "probability": 0.02,
                 "target_group": 0,
                 "num_groups": 2,
                 "base_height_range": (0.22, 0.34),
-                "pitch_range": (1.35, 1.75),
-                "roll_range": (1.35, 1.75),
+                "pitch_range": (-1.57, 1.57),
+                "roll_range": (-1.57, 1.57),
                 "yaw_range": (-math.pi, math.pi),
                 "xy_range": (-0.20, 0.20),
                 "velocity_range": {
@@ -108,7 +108,7 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             },
         )
         self.commands.base_jump = mdp.JumpCommandCfg(
-            jump_probability=0.5,
+            jump_probability=0.3,
             standing_height_range=(0.7, 0.9),
             jump_delta_range=(0.25, 0.5),
             crouch_height=0.65,
@@ -118,11 +118,13 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
         )
         self.commands.base_jump.assist_force_max = 0.0
         self.events.push_robot = EventTerm(
-            func=mdp.apply_external_force_torque_stochastic,
+            func=mdp.apply_external_force_torque_stochastic_additional_for_env_group,
             mode="interval",
             interval_range_s=(0.0, 0.0),
             params={
                 "asset_cfg": SceneEntityCfg("robot", body_names="base_Link"),
+                "target_group": 0,
+                "num_groups": 2,
                 "force_range": {
                     "x": (-500.0, 500.0),
                     "y": (-500.0, 500.0),
@@ -131,10 +133,20 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
                 "torque_range": {"x": (-50.0, 50.0), "y": (-50.0, 50.0), "z": (-0.0, 0.0)},
                 "probability": 0.002,  # Expect step = 1 / probability
             },
+            is_global_time=False,
+            min_step_count_between_reset=0,
         )
         self.terminations.base_contact = DoneTerm(
-            func=mdp.illegal_contact,
-            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"), "threshold": 1.0},
+            func=mdp.mixed_base_contact_termination_for_env_group,
+            params={
+                "jump_sensor_cfg": SceneEntityCfg("contact_forces", body_names=["abad_.*", "hip_.*", "knee_.*", "base_Link"]),
+                "gait_sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"),
+                "limit_angle": 1.2,
+                "threshold": 1.0,
+                "grace_steps": 40,
+                "target_group": 0,
+                "num_groups": 2,
+            },
         )
         # ===================== separated velocity commands =====================
         self.commands.base_velocity_jump = mdp.UniformLevelVelocityCommandCfg(
@@ -146,9 +158,9 @@ class WFMultiExpertFlatEnvCfg(WFJumpFlatEnvCfg):
             debug_vis=False,
             resampling_time_range=(10.0, 10.0),
             ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-                lin_vel_x=(-4.0, 4.0),
+                lin_vel_x=(-1.0, 1.0),
                 lin_vel_y=(-0.0, 0.0),
-                ang_vel_z=(-math.pi, math.pi),
+                ang_vel_z=(-0.5, 0.5),
                 heading=(-math.pi, math.pi),
             ),
             limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(

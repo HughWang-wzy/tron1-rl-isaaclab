@@ -77,8 +77,6 @@ class JumpCommand(CommandTerm):
     @property
     def command(self) -> torch.Tensor:
         """The jump command. Shape is (num_envs, 3)."""
-        print("JumpCommand.command called")
-        print(f"Jump command values (first 5 envs): {self.jump_cmd[:5]}")
         return self.jump_cmd
 
     def get_phase_masks(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
